@@ -146,6 +146,5 @@ in `texts.json` file:
 ```
 ---
 
-|                                                links                                                                         |                                 description                                         |
-|:----------------------------------------------------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------:|
-|[![Static Badge](https://img.shields.io/badge/Telegram-%40Dekim__vpn__bot-blue)](https://t.me/Dekim_vpn_bot)                  |                     My telegram bot for example (fully operational)                 |
+
+
