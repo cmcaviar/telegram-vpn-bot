@@ -628,7 +628,7 @@ def checkTime():
                     db = sqlite3.connect(DBCONNECT)
                     db.execute(f"UPDATE userss SET banned=true where tgid=?", (i[1],))
                     db.commit()
-                    check = subprocess.call(f'./deleteuserfromvpn.sh {str(i[1])}', shell=True)
+                    subprocess.call(f'sudo ./deleteuserfromvpn.sh {str(i[1])}', shell=True)
 
                     dateto = datetime.utcfromtimestamp(int(i[2]) + CONFIG['UTC_time'] * 3600).strftime(
                         '%d.%m.%Y %H:%M')

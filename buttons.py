@@ -28,11 +28,11 @@ async def main_buttons(user: User):
 
 async def admin_buttons():
     Butt_admin = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    Butt_admin.add(types.KeyboardButton(e.emojize(f"Уведомление об обновлении")))
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Вывести пользователей :bust_in_silhouette:")))
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Редактировать пользователя по id :pencil:")))
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Статичные пользователи")))
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Продлить пробный период")))
-    Butt_admin.add(types.KeyboardButton(e.emojize(f"Уведомление об обновлении"))) 
     Butt_admin.add(types.KeyboardButton(e.emojize("Главное меню :right_arrow_curving_left:")))
     return Butt_admin
 
