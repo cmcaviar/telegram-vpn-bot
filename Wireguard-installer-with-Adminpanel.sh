@@ -136,7 +136,7 @@ function installWireGuard() {
 		if [[ ${BOT_AUTO_INSTALL} == '1' ]]; then
 			apt-get install unzip
 			apt-get install python3-pip -y
-			wget https://github.com/cmcaviar/telegram-vpn-bot/releases/download/release/master.zip
+			wget https://github.com/cmcaviar/telegram-vpn-bot/releases/download/release_1.0.0/master.zip
 			unzip master.zip
 			rm master.zip
 #      apt-get install git
