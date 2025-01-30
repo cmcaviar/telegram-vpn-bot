@@ -31,7 +31,6 @@ with open("texts.json", encoding="utf-8") as file_handler:
     text_mess = json.load(file_handler)
     texts_for_bot = text_mess
 
-DBCONNECT = "data.sqlite"
 BOTAPIKEY = CONFIG["tg_token"]
 
 bot = AsyncTeleBot(CONFIG["tg_token"], state_storage=StateMemoryStorage())
