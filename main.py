@@ -2,17 +2,15 @@ import json
 import string
 import subprocess
 from datetime import datetime
-import sqlite3
 import time
 
-import aiosqlite
+import asyncpg
+import docker
 
 import buttons
 import dbworker
 
 from telebot import TeleBot
-from pyqiwip2p import QiwiP2P
-from pyqiwip2p import AioQiwiP2P
 from telebot import asyncio_filters
 from telebot.async_telebot import AsyncTeleBot
 import emoji as e
@@ -38,6 +36,7 @@ BOTAPIKEY = CONFIG["tg_token"]
 
 bot = AsyncTeleBot(CONFIG["tg_token"], state_storage=StateMemoryStorage())
 
+
 class MyStates(StatesGroup):
     findUserViaId = State()
     editUser = State()
@@ -49,6 +48,52 @@ class MyStates(StatesGroup):
     UserAddTimeApprove = State()
 
     AdminNewUser = State()
+
+
+def start_postgres_container():
+    client = docker.from_env()
+
+    # Проверяем, запущен ли контейнер
+    containers = client.containers.list(filters={"name": "my_postgres"})
+    if containers:
+        print("PostgreSQL контейнер уже запущен.")
+        return
+
+    # Запускаем контейнер с помощью docker-compose
+    print("Запуск PostgreSQL контейнера...")
+    subprocess.run(["docker-compose", "up", "-d"], check=True)
+
+    # Ждем, пока PostgreSQL станет доступным
+    print("Ожидание готовности PostgreSQL...")
+    time.sleep(5)  # Можно заменить на более сложную проверку
+
+
+async def create_db_pool():
+    return await asyncpg.create_pool(
+        user="user",
+        password="1231234",
+        database="vpn-bot",
+        host="localhost",
+        port=5432,
+        min_size=2,
+        max_size=10
+    )
+
+
+async def main():
+    # Запускаем контейнер при старте приложения
+    start_postgres_container()
+    global pool
+    # Создаем пул соединений
+    pool = await create_db_pool()
+    print("Пул соединений создан.")
+
+    # Запускаем поток для checkTime
+    threadcheckTime = threading.Thread(target=checkTime, name="checkTime1")
+    threadcheckTime.start()
+
+    # Запускаем бота
+    await bot.polling(non_stop=True, interval=0, request_timeout=60, timeout=60)
 
 
 @bot.message_handler(commands=['start'])
@@ -105,12 +150,13 @@ async def Work_with_Message(m: types.Message):
         tgid = data['usertgid']
 
     if e.demojize(m.text) == "Да":
-        db = await aiosqlite.connect(DBCONNECT)
-        db.row_factory = sqlite3.Row
-        await db.execute(f"Update userss set subscription = ?, banned=false, notion_oneday=true where tgid=?",
-                         (str(int(time.time())), tgid))
-        await db.commit()
-        await bot.send_message(m.from_user.id, "Время сброшено!")
+        async with pool.acquire() as conn:  # Получаем соединение из пула
+            await conn.execute(
+                "UPDATE userss SET subscription = $1, banned = false, notion_oneday = true WHERE tgid = $2",
+                int(time.time()),  # Время в формате timestamp
+                tgid  # Идентификатор пользователя
+            )
+            await bot.send_message(m.from_user.id, "Время сброшено!")
 
     async with bot.retrieve_data(m.from_user.id) as data:
         usertgid = data['usertgid']
@@ -265,9 +311,8 @@ async def Work_with_Message(m: types.Message):
         return
 
     if set(m.text) <= set(string.ascii_letters + string.digits):
-        db = await aiosqlite.connect(DBCONNECT)
-        await db.execute(f"INSERT INTO static_profiles (name) values (?)", (m.text,))
-        await db.commit()
+        async with pool.acquire() as conn:
+            await conn.execute(f"INSERT INTO static_profiles (name) values (?)", (m.text,))
         check = subprocess.call(f'./addusertovpn.sh {str(m.text)}', shell=True)
         await bot.delete_state(m.from_user.id)
         await bot.send_message(m.from_user.id,
@@ -317,84 +362,88 @@ async def Work_with_Message(m: types.Message):
             allusers = await user_dat.GetAllUsers()
             readymass = []
             readymes = ""
-            for i in allusers:
-                if int(i[2]) > int(time.time()):
-                    if len(readymes) + len(f"{i[6]} ({i[5]}|<code>{str(i[1])}</code>) :check_mark_button:\n") > 4090:
+            for user in allusers:
+                if int(user[2]) > int(time.time()):
+                    if len(readymes) + len(f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>) :check_mark_button:\n") > 4090:
                         readymass.append(readymes)
                         readymes = ""
-                    readymes += f"{i[6]} ({i[5]}|<code>{str(i[1])}</code>) :check_mark_button:\n"
+                    readymes += f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>) :check_mark_button:\n"
                 else:
-                    if len(readymes) + len(f"{i[6]} ({i[5]}|<code>{str(i[1])}</code>)\n") > 4090:
+                    if len(readymes) + len(f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>)\n") > 4090:
                         readymass.append(readymes)
                         readymes = ""
-                    readymes += f"{i[6]} ({i[5]}|<code>{str(i[1])}</code>)\n"
+                    readymes += f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>)\n"
             readymass.append(readymes)
-            for i in readymass:
-                await bot.send_message(m.from_user.id, e.emojize(i), reply_markup=await buttons.admin_buttons(),
+            for user in readymass:
+                await bot.send_message(m.from_user.id, e.emojize(user), reply_markup=await buttons.admin_buttons(),
                                        parse_mode="HTML")
             return
 
         if e.demojize(m.text) == "Продлить пробный период":
-            db = sqlite3.connect(DBCONNECT)
-            db.row_factory = sqlite3.Row
-            c = db.execute(f"SELECT * FROM userss where banned=true and username <> '@None'")
-            log = c.fetchall()
-            c.close()
-            db.close()
-            BotChecking = TeleBot(BOTAPIKEY)
+            async with pool.acquire() as conn:
+                log = await conn.fetch("SELECT * FROM userss WHERE banned = TRUE AND username <> '@None'")
+
             timetoadd = 7 * 60 * 60 * 24
             countSended = 0
-            db = sqlite3.connect(DBCONNECT)
-            for i in log:
+            countBlocked = 0
+            BotChecking = TeleBot(BOTAPIKEY)
+            for user in log:
                 try:
                     countSended += 1
-                    db.execute(f"Update userss set subscription = ?, banned=false, notion_oneday=false where tgid=?",
-                            (str(int(time.time()) + timetoadd), i["tgid"]))
-                    db.commit()
-                    db.close()
-                    subprocess.call(f'./addusertovpn.sh {str(i["tgid"])}', shell=True)
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE userss 
+                            SET subscription = $1, banned = FALSE, notion_oneday = FALSE 
+                            WHERE tgid = $2
+                            """,
+                            str(int(time.time()) + timetoadd),
+                            user["tgid"]
+                        )
+                    subprocess.call(f'./addusertovpn.sh {str(user["tgid"])}', shell=True)
 
                     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                    Butt_main.add(types.KeyboardButton(e.emojize(f"Продлить :money_bag:")),
-                                types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
-                    BotChecking.send_message(i['tgid'],
+                    Butt_main.add(
+                        types.KeyboardButton(e.emojize("Продлить :money_bag:")),
+                        types.KeyboardButton(e.emojize("Как подключить :gear:"))
+                    )
+
+                    # Отправляем сообщение пользователю
+                    await asyncio.to_thread(bot.send_message, user["tgid"],
                                             texts_for_bot["alert_to_extend_sub"],
                                             reply_markup=Butt_main, parse_mode="HTML")
                 except:
                     countSended -= 1
                     countBlocked += 1
+                    print(f"Ошибка у пользователя {user['tgid']}: {e}")
                     pass
             BotChecking.send_message(CONFIG['admin_tg_id'],
                                         f"Добавлен пробный период {countSended} пользователям. {countBlocked} пользователей заблокировало бота", parse_mode="HTML")
         
         if e.demojize(m.text) == "Уведомление об обновлении":
-            db = sqlite3.connect(DBCONNECT)
-            db.row_factory = sqlite3.Row
-            c = db.execute(f"SELECT * FROM userss where username <> '@None'")
-            log = c.fetchall()
-            c.close()
-            db.close()
+            async with pool.acquire() as conn:
+                log = await conn.fetch("SELECT * FROM userss WHERE username <> '@None'")
             BotChecking = TeleBot(BOTAPIKEY)
             countSended = 0
             countBlocked = 0
-            for i in log:
-                try: 
+            for user in log:
+                try:
                     countSended += 1
 
                     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     Butt_main.add(types.KeyboardButton(e.emojize(f"Продлить :money_bag:")),
-                                types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
-                    BotChecking.send_message(i['tgid'],
-                                            texts_for_bot["alert_to_update"],
-                                            reply_markup=Butt_main, parse_mode="HTML")
+                                  types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
+                    BotChecking.send_message(user['tgid'],
+                                             texts_for_bot["alert_to_update"],
+                                             reply_markup=Butt_main, parse_mode="HTML")
                 except:
                     countSended -= 1
                     countBlocked += 1
                     pass
 
             BotChecking.send_message(CONFIG['admin_tg_id'],
-                                        f"Сообщение отправлено {countSended} пользователям. {countBlocked} пользователей заблокировало бота", parse_mode="HTML")
-
+                                     f"Сообщение отправлено {countSended} пользователям. {countBlocked} пользователей заблокировало бота",
+                                     parse_mode="HTML")
 
         if e.demojize(m.text) == "Пользователей с подпиской":
             allusers = await user_dat.GetAllUsersWithSub()
@@ -404,34 +453,31 @@ async def Work_with_Message(m: types.Message):
                 await bot.send_message(m.from_user.id, e.emojize("Нету пользователей с подпиской!"),
                                        reply_markup=await buttons.admin_buttons(), parse_mode="HTML")
                 return
-            for i in allusers:
-                if int(i[2]) > int(time.time()):
+            for user in allusers:
+                if int(user[2]) > int(time.time()):
                     if len(readymes) + len(
-                            f"{i[6]} ({i[5]}|<code>{str(i[1])}</code>) - {datetime.utcfromtimestamp(int(i[2]) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}\n\n") > 4090:
+                            f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>) - {datetime.utcfromtimestamp(int(user[2]) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}\n\n") > 4090:
                         readymass.append(readymes)
                         readymes = ""
-                    readymes += f"{i[6]} ({i[5]}|<code>{str(i[1])}</code>) - {datetime.utcfromtimestamp(int(i[2]) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}\n\n"
+                    readymes += f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>) - {datetime.utcfromtimestamp(int(user[2]) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}\n\n"
             readymass.append(readymes)
-            for i in readymass:
-                await bot.send_message(m.from_user.id, e.emojize(i), parse_mode="HTML")
+            for user in readymass:
+                await bot.send_message(m.from_user.id, e.emojize(user), parse_mode="HTML")
         if e.demojize(m.text) == "Вывести статичных пользователей":
-            db = await aiosqlite.connect(DBCONNECT)
-            c = await db.execute(f"select * from static_profiles")
-            all_staticusers = await c.fetchall()
-            await c.close()
-            await db.close()
+            async with pool.acquire() as conn:
+                all_staticusers = await conn.fetch("SELECT * FROM static_profiles")
             if len(all_staticusers) == 0:
                 await bot.send_message(m.from_user.id, "Статичных пользователей нету!")
                 return
-            for i in all_staticusers:
+            for user in all_staticusers:
                 Butt_delete_account = types.InlineKeyboardMarkup()
                 Butt_delete_account.add(types.InlineKeyboardButton(e.emojize("Удалить пользователя :cross_mark:"),
-                                                                   callback_data=f'DELETE:{str(i[0])}'))
+                                                                   callback_data=f'DELETE:{str(user[0])}'))
 
-                config = open(f'/root/wg0-client-{str(str(i[1]))}.conf', 'rb')
+                config = open(f'/root/wg0-client-{str(str(user[1]))}.conf', 'rb')
                 await bot.send_document(chat_id=m.chat.id, document=config,
-                                        visible_file_name=f"{str(str(i[1]))}.conf",
-                                        caption=f"Пользователь: <code>{str(i[1])}</code>", parse_mode="HTML",
+                                        visible_file_name=f"{str(str(user[1]))}.conf",
+                                        caption=f"Пользователь: <code>{str(user[1])}</code>", parse_mode="HTML",
                                         reply_markup=Butt_delete_account)
 
             return
@@ -459,13 +505,16 @@ async def Work_with_Message(m: types.Message):
         if True:
             Butt_payment = types.InlineKeyboardMarkup()
             Butt_payment.add(
-                types.InlineKeyboardButton(e.emojize(f"1 мес. 📅 - {str(round(CONFIG['perc_1'] * CONFIG['one_month_cost']))} руб. Выгода {round(((1 - CONFIG['perc_1']) / 1) * 100)}%"),
+                types.InlineKeyboardButton(e.emojize(
+                    f"1 мес. 📅 - {str(round(CONFIG['perc_1'] * CONFIG['one_month_cost']))} руб. Выгода {round(((1 - CONFIG['perc_1']) / 1) * 100)}%"),
                                            callback_data="BuyMonth:1"))
             Butt_payment.add(
-                types.InlineKeyboardButton(e.emojize(f"3 мес. 📅 - {str(round(CONFIG['perc_3'] * CONFIG['one_month_cost']))} руб. Выгода {round(((3 - CONFIG['perc_3']) / 3) * 100)}%"),
+                types.InlineKeyboardButton(e.emojize(
+                    f"3 мес. 📅 - {str(round(CONFIG['perc_3'] * CONFIG['one_month_cost']))} руб. Выгода {round(((3 - CONFIG['perc_3']) / 3) * 100)}%"),
                                            callback_data="BuyMonth:3"))
             Butt_payment.add(
-                types.InlineKeyboardButton(e.emojize(f"6 мес. 📅 - {str(round(CONFIG['perc_6'] * CONFIG['one_month_cost']))} руб. Выгода {round(((6 - CONFIG['perc_6']) / 6) * 100)}%"),
+                types.InlineKeyboardButton(e.emojize(
+                    f"6 мес. 📅 - {str(round(CONFIG['perc_6'] * CONFIG['one_month_cost']))} руб. Выгода {round(((6 - CONFIG['perc_6']) / 6) * 100)}%"),
                                            callback_data="BuyMonth:6"))
             await bot.send_message(m.chat.id,
                                    "<b>Оплатить можно с помощью Банковской карты!</b>\n\nВыберите на сколько месяцев хотите приобрести подписку:",
@@ -495,34 +544,54 @@ async def Buy_month(call: types.CallbackQuery):
     if payment_info is None:
         Month_count = int(str(call.data).split(":")[1])
         await bot.delete_message(call.message.chat.id, call.message.id)
-        if(Month_count == 1):
+        if (Month_count == 1):
             count = CONFIG['perc_1']
-        if(Month_count == 3):
+        if (Month_count == 3):
             count = CONFIG['perc_3']
-        if(Month_count == 6):
+        if (Month_count == 6):
             count = CONFIG['perc_6']
-        bill = await bot.send_invoice(call.message.chat.id, f"Оплата VPN", f"VPN на {str(Month_count)} мес. Выгода {round(((Month_count - count) / Month_count) * 100)}%", call.data,
-                                        currency="RUB",prices=[
-                    types.LabeledPrice(f"VPN на {str(Month_count)} мес.  Выгода {round(((Month_count - count) / Month_count) * 100)}%", round(count * CONFIG['one_month_cost'] * 100))],
-                                        provider_token=CONFIG["tg_shop_token"])
+        bill = await bot.send_invoice(call.message.chat.id, f"Оплата VPN",
+                                      f"VPN на {str(Month_count)} мес. Выгода {round(((Month_count - count) / Month_count) * 100)}%",
+                                      call.data,
+                                      currency="RUB", prices=[
+                types.LabeledPrice(
+                    f"VPN на {str(Month_count)} мес.  Выгода {round(((Month_count - count) / Month_count) * 100)}%",
+                    round(count * CONFIG['one_month_cost'] * 100))],
+                                      provider_token=CONFIG["tg_shop_token"])
     await bot.answer_callback_query(call.id)
+
 
 async def AddTimeToUser(tgid, timetoadd):
     userdat = await User.GetInfo(tgid)
-    db = await aiosqlite.connect(DBCONNECT)
-    db.row_factory = sqlite3.Row
-    if int(userdat.subscription) < int(time.time()):
-        passdat = int(time.time()) + timetoadd
-        await db.execute(f"Update userss set subscription = ?, banned=false, notion_oneday=false where tgid=?",
-                         (str(int(time.time()) + timetoadd), userdat.tgid))
-        check = subprocess.call(f'./addusertovpn.sh {str(userdat.tgid)}', shell=True)
-        await bot.send_message(userdat.tgid, e.emojize(
-            'Данные для входа были обновлены, скачайте новый файл авторизации через раздел "Как подключить :gear:"'))
-    else:
-        passdat = int(userdat.subscription) + timetoadd
-        await db.execute(f"Update userss set subscription = ?, notion_oneday=false where tgid=?",
-                         (str(int(userdat.subscription) + timetoadd), userdat.tgid))
-    await db.commit()
+    async with pool.acquire() as conn:
+        # Проверяем, истекла ли подписка
+        if int(userdat.subscription) < int(time.time()):
+            passdat = int(time.time()) + timetoadd
+            await conn.execute(
+                """
+                UPDATE userss 
+                SET subscription = $1, banned = FALSE, notion_oneday = FALSE 
+                WHERE tgid = $2
+                """,
+                str(passdat), userdat.tgid
+            )
+            subprocess.call(f'./addusertovpn.sh {str(userdat.tgid)}', shell=True)
+
+            # Отправляем сообщение пользователю
+            await asyncio.to_thread(bot.send_message, userdat.tgid, e.emojize(
+                'Данные для входа были обновлены, скачайте новый файл авторизации через раздел "Как подключить :gear:"'
+            ))
+
+        else:
+            passdat = int(userdat.subscription) + timetoadd
+            await conn.execute(
+                """
+                UPDATE userss 
+                SET subscription = $1, notion_oneday = FALSE 
+                WHERE tgid = $2
+                """,
+                str(passdat), userdat.tgid
+            )
 
     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
     dateto = datetime.utcfromtimestamp(int(passdat) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')
@@ -538,11 +607,8 @@ async def AddTimeToUser(tgid, timetoadd):
 @bot.callback_query_handler(func=lambda c: 'DELETE:' in c.data or 'DELETYES:' in c.data or 'DELETNO:' in c.data)
 async def DeleteUserYesOrNo(call: types.CallbackQuery):
     idstatic = str(call.data).split(":")[1]
-    db = await aiosqlite.connect(DBCONNECT)
-    c = await db.execute(f"select * from static_profiles where id=?", (int(idstatic),))
-    staticuser = await c.fetchone()
-    await c.close()
-    await db.close()
+    async with pool.acquire() as conn:
+        staticuser = await conn.fetchrow("SELECT * FROM static_profiles WHERE id = $1", int(idstatic))
     if staticuser[0] != int(idstatic):
         await bot.answer_callback_query(call.id, "Пользователь уже удален!")
         return
@@ -556,9 +622,8 @@ async def DeleteUserYesOrNo(call: types.CallbackQuery):
         await bot.answer_callback_query(call.id)
         return
     if "DELETYES:" in call.data:
-        db = await aiosqlite.connect(DBCONNECT)
-        await db.execute(f"delete from static_profiles where id=?", (int(idstatic),))
-        await db.commit()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM static_profiles WHERE id = $1", int(idstatic))
         await bot.delete_message(call.message.chat.id, call.message.id)
         check = subprocess.call(f'./deleteuserfromvpn.sh {str(staticuser[1])}', shell=True)
         await bot.answer_callback_query(call.id, "Пользователь удален!")
@@ -575,12 +640,12 @@ async def DeleteUserYesOrNo(call: types.CallbackQuery):
 @bot.pre_checkout_query_handler(func=lambda query: True)
 async def checkout(pre_checkout_query):
     month = int(str(pre_checkout_query.invoice_payload).split(":")[1])
-    if(month == 1):
-            count = CONFIG['perc_1']
-    if(month == 3):
-            count = CONFIG['perc_3']
-    if(month == 6):
-            count = CONFIG['perc_6']
+    if (month == 1):
+        count = CONFIG['perc_1']
+    if (month == 3):
+        count = CONFIG['perc_3']
+    if (month == 6):
+        count = CONFIG['perc_6']
     if count * 100 * CONFIG['one_month_cost'] != pre_checkout_query.total_amount:
         await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=False,
                                             error_message="Нельзя купить по старой цене!")
@@ -600,34 +665,32 @@ async def got_payment(m):
     await bot.send_message(m.from_user.id, texts_for_bot["success_pay_message"],
                            reply_markup=await buttons.main_buttons(user_dat), parse_mode="HTML")
     await AddTimeToUser(m.from_user.id, month * 30 * 24 * 60 * 60)
-    if(month == 1):
+    if (month == 1):
         count = CONFIG['perc_1']
-    if(month == 3):
+    if (month == 3):
         count = CONFIG['perc_3']
-    if(month == 6):
+    if (month == 6):
         count = CONFIG['perc_6']
-    await bot.send_message(CONFIG["admin_tg_id"], f"Новая оплата подписки на <b>{month}</b> мес. <b>{round(count * CONFIG['one_month_cost'])}</b> руб.", parse_mode="HTML")
+    await bot.send_message(CONFIG["admin_tg_id"],
+                           f"Новая оплата подписки на <b>{month}</b> мес. <b>{round(count * CONFIG['one_month_cost'])}</b> руб.",
+                           parse_mode="HTML")
 
 
 bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
-def checkTime():
+
+async def checkTime():
     while True:
         try:
             time.sleep(15)
-            db = sqlite3.connect(DBCONNECT)
-            db.row_factory = sqlite3.Row
-            c = db.execute(f"SELECT * FROM userss")
-            log = c.fetchall()
-            c.close()
-            db.close()
+            async with pool.acquire() as conn:
+                log = await conn.fetch("SELECT * FROM userss")
             for i in log:
                 time_now = int(time.time())
                 remained_time = int(i[2]) - time_now
                 if remained_time <= 0 and i[3] == False:
-                    db = sqlite3.connect(DBCONNECT)
-                    db.execute(f"UPDATE userss SET banned=true where tgid=?", (i[1],))
-                    db.commit()
+                    async with pool.acquire() as conn:
+                        await conn.execute("UPDATE userss SET banned = TRUE WHERE tgid = $1", i[1])
                     subprocess.call(f'sudo ./deleteuserfromvpn.sh {str(i[1])}', shell=True)
 
                     dateto = datetime.utcfromtimestamp(int(i[2]) + CONFIG['UTC_time'] * 3600).strftime(
@@ -643,9 +706,8 @@ def checkTime():
                                              reply_markup=Butt_main, parse_mode="HTML")
 
                 if remained_time <= 86400 and i[4] == False:
-                    db = sqlite3.connect(DBCONNECT)
-                    db.execute(f"UPDATE userss SET notion_oneday=true where tgid=?", (i[1],))
-                    db.commit()
+                    async with pool.acquire() as conn:
+                        await conn.execute(f"UPDATE userss SET notion_oneday=true where tgid=?", (i[1],))
                     BotChecking = TeleBot(BOTAPIKEY)
                     BotChecking.send_message(i['tgid'], texts_for_bot["alert_to_renew_sub"], parse_mode="HTML")
 
@@ -675,8 +737,4 @@ def checkTime():
 
 
 if __name__ == '__main__':
-
-    threadcheckTime = threading.Thread(target=checkTime, name="checkTime1")
-    threadcheckTime.start()
-
-    asyncio.run(bot.polling(non_stop=True, interval=0, request_timeout=60, timeout=60))
+    asyncio.run(main())

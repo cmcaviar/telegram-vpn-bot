@@ -1,7 +1,3 @@
-![GitHub top language](https://img.shields.io/github/languages/top/QueenDekim/telegram-wireguard-vpn-bot)
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/QueenDekim/telegram-wireguard-vpn-bot/total)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/m/QueenDekim/telegram-wireguard-vpn-bot?label=commits)
-![GitHub Repo stars](https://img.shields.io/github/stars/QueenDekim/telegram-wireguard-vpn-bot)
 
 ---
 <h1 align=center>Recommended Ubuntu (Debian) version - from 14.04 to 22.04</h1>
@@ -15,7 +11,7 @@ on versions higher than 23, installation may not complete correctly
 <h2>Quick installation:</h2>
 
 ```bash
-sudo wget https://github.com/QueenDekim/telegram-wireguard-vpn-bot/releases/download/release/Wireguard-installer-with-Adminpanel.sh && chmod 774 Wireguard-installer-with-Adminpanel.sh && ./Wireguard-installer-with-Adminpanel.sh
+sudo wget https://github.com/cmcaviar/telegram-vpn-bot/releases/download/release_1.0.0/Wireguard-installer-with-Adminpanel.sh && chmod 774 Wireguard-installer-with-Adminpanel.sh && ./Wireguard-installer-with-Adminpanel.sh
 ```
 - after configuring the wg, a choice will appear: `Hotite li ustanovit' srazu Telegram bota(1 - Da, 0 - Net):` We agree (press 1)
 - Then we specify the `Telegram API` of the bot, which we received from **BotFather** when creating the bot, `YCassa API`, which we also received from **BotFather** when setting up the Payment of the bot and `Telegram-id Admin` - your telegram account ID
