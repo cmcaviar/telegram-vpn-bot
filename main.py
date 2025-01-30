@@ -97,9 +97,10 @@ async def main():
 
 @bot.message_handler(commands=['start'])
 async def start(message: types.Message):
+    global pool
     if message.chat.type == "private":
         await bot.delete_state(message.from_user.id)
-        user_dat = await User.GetInfo(message.chat.id)
+        user_dat = await User.GetInfo(pool=pool, tgid=message.chat.id)
         if user_dat.registered:
             await bot.send_message(message.chat.id, "Информация о подписке", parse_mode="HTML",
                                    reply_markup=await main_buttons(user_dat))
@@ -111,7 +112,7 @@ async def start(message: types.Message):
                 username = str(message.from_user.id)
 
             await user_dat.Adduser(username, message.from_user.full_name)
-            user_dat = await User.GetInfo(message.chat.id)
+            user_dat = await User.GetInfo(pool, message.chat.id)
             await bot.send_message(message.chat.id, e.emojize(texts_for_bot["hello_message"]), parse_mode="HTML",
                                    reply_markup=await main_buttons(user_dat))
             await bot.send_message(message.chat.id, e.emojize(texts_for_bot["trial_message"]))
@@ -119,9 +120,10 @@ async def start(message: types.Message):
 
 @bot.message_handler(state=MyStates.editUser, content_types=["text"])
 async def Work_with_Message(m: types.Message):
+    global pool
     async with bot.retrieve_data(m.from_user.id) as data:
         tgid = data['usertgid']
-    user_dat = await User.GetInfo(tgid)
+    user_dat = await User.GetInfo(pool=pool, tgid=tgid)
     if e.demojize(m.text) == "Назад :right_arrow_curving_left:":
         await bot.reset_data(m.from_user.id)
         await bot.delete_state(m.from_user.id)
@@ -145,6 +147,7 @@ async def Work_with_Message(m: types.Message):
 
 @bot.message_handler(state=MyStates.editUserResetTime, content_types=["text"])
 async def Work_with_Message(m: types.Message):
+    global pool
     async with bot.retrieve_data(m.from_user.id) as data:
         tgid = data['usertgid']
 
@@ -159,7 +162,8 @@ async def Work_with_Message(m: types.Message):
 
     async with bot.retrieve_data(m.from_user.id) as data:
         usertgid = data['usertgid']
-    user_dat = await User.GetInfo(usertgid)
+    user_dat = await User.GetInfo(pool=pool, tgid=tgid)
+
     readymes = f"Пользователь: <b>{str(user_dat.fullname)}</b> ({str(user_dat.username)})\nTG-id: <code>{str(user_dat.tgid)}</code>\n\n"
 
     if int(user_dat.subscription) > int(time.time()):
@@ -262,7 +266,7 @@ async def Work_with_Message(m: types.Message):
 
     async with bot.retrieve_data(m.from_user.id) as data:
         usertgid = data['usertgid']
-    user_dat = await User.GetInfo(usertgid)
+    user_dat = await User.GetInfo(pool=pool, tgid=tgid)
     readymes = f"Пользователь: <b>{str(user_dat.fullname)}</b> ({str(user_dat.username)})\nTG-id: <code>{str(user_dat.tgid)}</code>\n\n"
 
     if int(user_dat.subscription) > int(time.time()):
@@ -277,13 +281,14 @@ async def Work_with_Message(m: types.Message):
 
 @bot.message_handler(state=MyStates.findUserViaId, content_types=["text"])
 async def Work_with_Message(m: types.Message):
+    global pool
     await bot.delete_state(m.from_user.id)
     try:
         user_id = int(m.text)
     except:
         await bot.send_message(m.from_user.id, "Неверный Id!", reply_markup=await buttons.admin_buttons())
         return
-    user_dat = await User.GetInfo(user_id)
+    user_dat = await User.GetInfo(pool=pool, tgid=id)
     if not user_dat.registered:
         await bot.send_message(m.from_user.id, "Такого пользователя не существует!",
                                reply_markup=await buttons.admin_buttons())
@@ -324,7 +329,8 @@ async def Work_with_Message(m: types.Message):
 
 @bot.message_handler(state="*", content_types=["text"])
 async def Work_with_Message(m: types.Message):
-    user_dat = await User.GetInfo(m.chat.id)
+    global pool
+    user_dat = await User.GetInfo(pool=pool, tgid=m.chat.id)
 
     if user_dat.registered == False:
         try:
@@ -538,7 +544,9 @@ async def Work_with_Message(m: types.Message):
 
 @bot.callback_query_handler(func=lambda c: 'BuyMonth:' in c.data)
 async def Buy_month(call: types.CallbackQuery):
-    user_dat = await User.GetInfo(call.from_user.id)
+    global pool
+    user_dat = await User.GetInfo(pool=pool, tgid=call.from_user.id)
+
     payment_info = await user_dat.PaymentInfo()
     if payment_info is None:
         Month_count = int(str(call.data).split(":")[1])
@@ -561,7 +569,8 @@ async def Buy_month(call: types.CallbackQuery):
 
 
 async def AddTimeToUser(tgid, timetoadd):
-    userdat = await User.GetInfo(tgid)
+    global pool
+    userdat = await User.GetInfo(pool=pool, tgid=tgid)
     async with pool.acquire() as conn:
         # Проверяем, истекла ли подписка
         if int(userdat.subscription) < int(time.time()):
@@ -660,7 +669,7 @@ async def got_payment(m):
     payment: types.SuccessfulPayment = m.successful_payment
     month = int(str(payment.invoice_payload).split(":")[1])
 
-    user_dat = await User.GetInfo(m.from_user.id)
+    user_dat = await User.GetInfo(pool=pool, tgid=m.from_user.id)
     await bot.send_message(m.from_user.id, texts_for_bot["success_pay_message"],
                            reply_markup=await buttons.main_buttons(user_dat), parse_mode="HTML")
     await AddTimeToUser(m.from_user.id, month * 30 * 24 * 60 * 60)
