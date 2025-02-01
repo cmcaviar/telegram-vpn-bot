@@ -78,21 +78,6 @@ async def create_db_pool():
         max_size=10
     )
 
-async def create_tables(conn):
-    """Создает таблицы, если они не существуют."""
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS userss (
-            id SERIAL PRIMARY KEY,
-            tgid BIGINT NOT NULL,
-            subscription BIGINT,
-            banned BOOLEAN DEFAULT FALSE,
-            notion_oneday BOOLEAN DEFAULT TRUE,
-            username TEXT,
-            fullname TEXT
-        )
-    """)
-    print("Таблицы созданы или уже существуют.")
-
 async def main():
     # Запускаем контейнер при старте приложения
     start_postgres_container()
@@ -100,9 +85,6 @@ async def main():
     # Создаем пул соединений
     pool = await create_db_pool()
     print("Пул соединений создан.")
-    async with pool.acquire() as conn:
-        await create_tables(conn)
-
     # Запускаем поток для checkTime
     threadcheckTime = threading.Thread(target=checkTime, name="checkTime1")
     threadcheckTime.start()
@@ -522,7 +504,7 @@ async def Work_with_Message(m: types.Message):
             return
 
     if e.demojize(m.text) == "Продлить :money_bag:":
-        payment_info = await user_dat.PaymentInfo()
+        payment_info = await user_dat.PaymentInfo(pool=pool)
         if True:
             Butt_payment = types.InlineKeyboardMarkup()
             Butt_payment.add(
@@ -563,7 +545,7 @@ async def Buy_month(call: types.CallbackQuery):
     global pool
     user_dat = await User.GetInfo(pool=pool, tgid=call.from_user.id)
 
-    payment_info = await user_dat.PaymentInfo()
+    payment_info = await user_dat.PaymentInfo(pool=pool)
     if payment_info is None:
         Month_count = int(str(call.data).split(":")[1])
         await bot.delete_message(call.message.chat.id, call.message.id)
