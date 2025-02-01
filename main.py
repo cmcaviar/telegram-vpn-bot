@@ -360,7 +360,7 @@ async def Work_with_Message(m: types.Message):
                                texts_for_bot["hello_message"],
                                parse_mode="HTML", reply_markup=await main_buttons(user_dat))
         return
-    await user_dat.CheckNewNickname(m)
+    await user_dat.CheckNewNickname(pool=pool, message=m)
 
     if m.from_user.id == CONFIG["admin_tg_id"]:
         if e.demojize(m.text) == "Админ-панель :smiling_face_with_sunglasses:":
@@ -380,7 +380,7 @@ async def Work_with_Message(m: types.Message):
             return
 
         if e.demojize(m.text) == "Всех пользователей":
-            allusers = await user_dat.GetAllUsers()
+            allusers = await user_dat.GetAllUsers(pool=pool)
             readymass = []
             readymes = ""
             for user in allusers:
@@ -467,7 +467,7 @@ async def Work_with_Message(m: types.Message):
                                      parse_mode="HTML")
 
         if e.demojize(m.text) == "Пользователей с подпиской":
-            allusers = await user_dat.GetAllUsersWithSub()
+            allusers = await user_dat.GetAllUsersWithSub(pool=pool)
             readymass = []
             readymes = ""
             if len(allusers) == 0:
