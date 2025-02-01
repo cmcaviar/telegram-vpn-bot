@@ -1,4 +1,3 @@
-import asyncpg
 import time
 import subprocess
 

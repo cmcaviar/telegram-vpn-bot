@@ -78,6 +78,20 @@ async def create_db_pool():
         max_size=10
     )
 
+async def create_tables(conn):
+    """Создает таблицы, если они не существуют."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS userss (
+            id SERIAL PRIMARY KEY,
+            tgid BIGINT NOT NULL,
+            subscription BIGINT,
+            banned BOOLEAN DEFAULT FALSE,
+            notion_oneday BOOLEAN DEFAULT TRUE,
+            username TEXT,
+            fullname TEXT
+        )
+    """)
+    print("Таблицы созданы или уже существуют.")
 
 async def main():
     # Запускаем контейнер при старте приложения
@@ -86,6 +100,8 @@ async def main():
     # Создаем пул соединений
     pool = await create_db_pool()
     print("Пул соединений создан.")
+    async with pool.acquire() as conn:
+        await create_tables(conn)
 
     # Запускаем поток для checkTime
     threadcheckTime = threading.Thread(target=checkTime, name="checkTime1")

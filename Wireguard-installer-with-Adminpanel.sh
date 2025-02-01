@@ -65,6 +65,12 @@ function initialCheck() {
 function installQuestions() {
 	echo "Dobro pozhalovat' v ustanovshchik WireGuard!"
 	echo ""
+  echo "установка docker-compose"
+	sudo apt remove docker-compose
+  sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+  sudo chmod +x /usr/local/bin/docker-compose
+  docker-compose --version
+  echo "docker-compose установлен"
 
 
 	# Detect public IPv4 or IPv6 address and pre-fill for the user
