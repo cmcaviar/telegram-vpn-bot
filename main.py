@@ -10,6 +10,9 @@ import docker
 import buttons
 import dbworker
 
+from alembic import command
+from alembic.config import Config
+
 from telebot import TeleBot
 from telebot import asyncio_filters
 from telebot.async_telebot import AsyncTeleBot
@@ -78,6 +81,10 @@ async def create_db_pool():
         max_size=10
     )
 
+async def run_migrations():
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+
 async def main():
     # Запускаем контейнер при старте приложения
     start_postgres_container()
@@ -85,6 +92,8 @@ async def main():
     # Создаем пул соединений
     pool = await create_db_pool()
     print("Пул соединений создан.")
+    await run_migrations()
+
     # Запускаем поток для checkTime
     threadcheckTime = threading.Thread(target=checkTime, name="checkTime1")
     threadcheckTime.start()
