@@ -50,7 +50,8 @@ class User:
             async with pool.acquire() as conn:
                 await conn.execute(
                     """INSERT INTO payments (tgid, bill_id, amount, time_to_add, mesid) 
-                    VALUES ($1, $2, $3, $4, $5)""",
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (tgid) DO NOTHING;""",
                     self.tgid, str(bill_id), summ, int(time_to_add), str(mesid)
                 )
 
@@ -65,7 +66,8 @@ class User:
             async with pool.acquire() as conn:
                 await conn.execute(
                     """INSERT INTO userss (tgid, subscription, username, fullname) 
-                    VALUES ($1, $2, $3, $4)""",
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (tgid) DO NOTHING;""",
                     self.tgid, str(int(time.time()) + int(CONFIG['trial_period']) * 86400), username, full_name
                 )
             subprocess.call(f'./addusertovpn.sh {str(self.tgid)}', shell=True)
