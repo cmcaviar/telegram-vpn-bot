@@ -127,7 +127,7 @@ async def start(message: types.Message):
 
                 username = str(message.from_user.id)
 
-            await user_dat.Adduser(username, message.from_user.full_name)
+            await user_dat.Adduser(username=username, full_name=message.from_user.full_name, pool=pool)
             user_dat = await User.GetInfo(pool, message.chat.id)
             await bot.send_message(message.chat.id, e.emojize(texts_for_bot["hello_message"]), parse_mode="HTML",
                                    reply_markup=await main_buttons(user_dat))
@@ -355,7 +355,7 @@ async def Work_with_Message(m: types.Message):
 
             username = str(m.from_user.id)
 
-        await user_dat.Adduser(username, m.from_user.full_name)
+        await user_dat.Adduser(username=username, full_name=m.from_user.full_name, pool=pool)
         await bot.send_message(m.chat.id,
                                texts_for_bot["hello_message"],
                                parse_mode="HTML", reply_markup=await main_buttons(user_dat))
