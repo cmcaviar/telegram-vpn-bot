@@ -10,7 +10,7 @@ steps = [
     # Создание таблицы userss
     step(
         """
-        CREATE TABLE userss (
+        CREATE TABLE IF NOT EXISTS userss (
             id SERIAL PRIMARY KEY,
             tgid BIGINT NOT NULL UNIQUE,
             subscription TEXT,
@@ -26,7 +26,7 @@ steps = [
     # Создание таблицы payments
     step(
         """
-        CREATE TABLE payments (
+        CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY,
             tgid BIGINT NOT NULL,
             bill_id TEXT,
@@ -41,7 +41,7 @@ steps = [
     # Создание таблицы static_profiles
     step(
         """
-        CREATE TABLE static_profiles (
+        CREATE TABLE IF NOT EXISTS static_profiles (
             id SERIAL PRIMARY KEY,
             name VARCHAR
         );
@@ -52,7 +52,7 @@ steps = [
     # Создание уникального индекса для tgid в userss
     step(
         """
-        CREATE UNIQUE INDEX idx_userss_tgid_unique
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_userss_tgid_unique
         ON userss (tgid)
         WHERE tgid IS NOT NULL;
         """,

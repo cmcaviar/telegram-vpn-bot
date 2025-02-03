@@ -85,8 +85,19 @@ async def run_migrations():
     backend = get_backend(db_url)
     migrations = read_migrations("my_migrations")
 
-    backend.apply_migrations(migrations)
-    print("Миграция проведена")
+    # Получаем список уже применённых миграций
+    applied_migrations = backend.get_applied_migration_hashes()  # Получаем множество применённых хэшей
+
+    # Фильтруем только неприменённые миграции
+    migrations_to_apply = [m for m in migrations if m.hash not in applied_migrations]
+
+    # Применяем только новые миграции
+    if migrations_to_apply:
+        backend.apply_migrations(migrations_to_apply)
+        print("Новые миграции успешно применены.")
+    else:
+        print("Все миграции уже применены, ничего делать не нужно.")
+
 
 async def main():
     # Запускаем контейнер при старте приложения
@@ -162,10 +173,11 @@ async def Work_with_Message(m: types.Message):
         tgid = data['usertgid']
 
     if e.demojize(m.text) == "Да":
+        now = str(int(time.time()))
         async with pool.acquire() as conn:  # Получаем соединение из пула
             await conn.execute(
                 "UPDATE userss SET subscription = $1, banned = false, notion_oneday = true WHERE tgid = $2",
-                int(time.time()),  # Время в формате timestamp
+                now,  # Время в формате timestamp
                 tgid  # Идентификатор пользователя
             )
             await bot.send_message(m.from_user.id, "Время сброшено!")
