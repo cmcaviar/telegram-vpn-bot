@@ -80,6 +80,7 @@ async def create_db_pool():
     )
 
 async def run_migrations():
+    print('начинаем миграцию')
     db_url = "postgresql://user:1231234@localhost:5432/vpn-bot"
     backend = get_backend(db_url)
     migrations = read_migrations("my_migrations")
