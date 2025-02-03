@@ -84,6 +84,7 @@ async def create_db_pool():
 async def run_migrations():
     alembic_cfg = Config("alembic.ini")
     command.upgrade(alembic_cfg, "head")
+    print("Миграция проведена")
 
 async def main():
     # Запускаем контейнер при старте приложения
@@ -295,7 +296,7 @@ async def Work_with_Message(m: types.Message):
     except:
         await bot.send_message(m.from_user.id, "Неверный Id!", reply_markup=await buttons.admin_buttons())
         return
-    user_dat = await User.GetInfo(pool=pool, tgid=id)
+    user_dat = await User.GetInfo(pool=pool, tgid=user_id)
     if not user_dat.registered:
         await bot.send_message(m.from_user.id, "Такого пользователя не существует!",
                                reply_markup=await buttons.admin_buttons())

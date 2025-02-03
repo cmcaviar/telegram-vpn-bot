@@ -36,7 +36,8 @@ class User:
     async def PaymentInfo(self, pool):
         """Получает информацию о платеже пользователя."""
         async with pool.acquire() as conn:
-            return await conn.fetchrow("SELECT * FROM payments WHERE tgid=$1", self.tgid)
+            log = await conn.fetchrow("SELECT * FROM payments WHERE tgid=$1", self.tgid)
+            return log
 
     async def CancelPayment(self, pool):
         """Удаляет платеж пользователя."""
