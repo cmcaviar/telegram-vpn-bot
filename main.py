@@ -10,9 +10,6 @@ import docker
 import buttons
 import dbworker
 
-from alembic import command
-from alembic.config import Config
-
 from telebot import TeleBot
 from telebot import asyncio_filters
 from telebot.async_telebot import AsyncTeleBot
@@ -22,6 +19,7 @@ import threading
 from telebot import types
 from telebot.asyncio_storage import StateMemoryStorage
 from telebot.asyncio_handler_backends import State, StatesGroup
+from yoyo import get_backend, read_migrations
 
 from buttons import main_buttons
 from dbworker import User
@@ -82,8 +80,11 @@ async def create_db_pool():
     )
 
 async def run_migrations():
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+    db_url = "postgresql://user:1231234@localhost:5432/vpn-bot"
+    backend = get_backend(db_url)
+    migrations = read_migrations("my_migrations")
+
+    backend.apply_migrations(migrations)
     print("Миграция проведена")
 
 async def main():
