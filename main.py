@@ -113,16 +113,12 @@ async def main():
     threadcheckTime = threading.Thread(target=checkTime, name="checkTime1")
     threadcheckTime.start()
 
-    # Запускаем бота
-    await bot.polling(non_stop=True, interval=0, request_timeout=60, timeout=60)
-
-
-async def on_startup():
     asyncio.create_task(subscription_checker())
     print("Subscription checker started")
 
+    # Запускаем бота
+    await bot.polling(non_stop=True, interval=0, request_timeout=60, timeout=60)
 
-bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
 
 @bot.message_handler(commands=['start'])
@@ -442,6 +438,8 @@ async def confirm_add_channel(m: types.Message):
         await bot.send_message(m.from_user.id, "❌ Добавление канала отменено.",
                                reply_markup=await buttons.admin_buttons_channels())
 
+    await bot.delete_state(m.from_user.id)
+    return
 
 @bot.message_handler(state=MyStates.DeleteChannels, content_types=["text"])
 async def delete_channels(m: types.Message):
@@ -567,16 +565,16 @@ async def Work_with_Message(m: types.Message):
 
             for user in allusers:
 
-                sub_end_promo = user.get('sub_promo_end')
+                sub_trial = user.get('sub_trial')
                 sub_end_paid = user.get('subscription')
 
-                if sub_end_promo:
-                    sub_end_promo += timedelta(hours=CONFIG['UTC_time'])
+                if sub_trial:
+                    sub_trial += timedelta(hours=CONFIG['UTC_time'])
                 if sub_end_paid:
                     sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
 
                 # Определяем, какая дата позже
-                latest_sub_end = max(filter(None, [sub_end_promo, sub_end_paid]), default=None)
+                latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
 
                 if user[2] > datetime.utcnow():  # Сравниваем как datetime
                     user_info = f"{user[7]} (<code>{str(user[1])}</code>) ✅ до {latest_sub_end}\n"
@@ -685,16 +683,16 @@ async def Work_with_Message(m: types.Message):
                                        reply_markup=await buttons.admin_buttons(), parse_mode="HTML")
                 return
             for user in allusers:
-                sub_end_promo = user.get('sub_promo_end')
+                sub_trial = user.get('sub_trial')
                 sub_end_paid = user.get('subscription')
 
-                if sub_end_promo:
-                    sub_end_promo += timedelta(hours=CONFIG['UTC_time'])
+                if sub_trial:
+                    sub_trial += timedelta(hours=CONFIG['UTC_time'])
                 if sub_end_paid:
                     sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
 
                 # Определяем, какая дата позже
-                latest_sub_end = max(filter(None, [sub_end_promo, sub_end_paid]), default=None)
+                latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
                 if latest_sub_end > datetime.utcnow():  # Сравниваем корректно с datetime.utcnow()
 
                     user_info = f"{user[7]} (<code>{str(user[1])}</code>) - {latest_sub_end}\n\n"
@@ -788,22 +786,22 @@ async def Work_with_Message(m: types.Message):
 
             # Получаем данные о подписке
             user_dat = await conn.fetchrow(
-                "SELECT sub_promo_end, subscription FROM userss WHERE tgid = $1",
+                "SELECT sub_trial, subscription FROM userss WHERE tgid = $1",
                 user_dat.tgid
             )
 
         # Проверяем активную подписку
         if user_dat:
-            sub_end_promo = user_dat.get('sub_promo_end')
+            sub_trial = user_dat.get('sub_trial')
             sub_end_paid = user_dat.get('subscription')
 
-            if sub_end_promo:
-                sub_end_promo += timedelta(hours=CONFIG['UTC_time'])
+            if sub_trial:
+                sub_trial += timedelta(hours=CONFIG['UTC_time'])
             if sub_end_paid:
                 sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
 
             # Определяем, какая дата позже
-            latest_sub_end = max(filter(None, [sub_end_promo, sub_end_paid]), default=None)
+            latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
 
             if latest_sub_end and latest_sub_end > now:
                 readymes = (
@@ -823,7 +821,7 @@ async def Work_with_Message(m: types.Message):
             channels = await conn.fetch("SELECT * FROM channels")
 
         if not channels:
-            await bot.send_message(user_dat.tgid, "Пока нет промо-предложений")
+            await bot.send_message(m.chat.id, "Пока нет промо-предложений")
             return
 
         channels_text = "\n".join(
@@ -877,10 +875,10 @@ async def check_subscription_handler(call: types.CallbackQuery):
     else:
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE userss SET sub_promo_end = NOW() + INTERVAL '1 day' * $1 WHERE tgid = $2",
+                "UPDATE userss SET promo_flag = TRUE, subscription = NOW() + INTERVAL '1 day' * $1 WHERE tgid = $2",
                 3, user_id
             )
-
+        subprocess.call(f'./addusertovpn.sh {user_id}', shell=True)
         await bot.send_message(chat_id, "✅ Доступ к VPN активирован на 3 дня!")
         await bot.delete_state(user_id, chat_id)
 
@@ -1039,18 +1037,18 @@ bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 async def checkTime():
     while True:
         try:
-            time.sleep(15)
+            time.sleep(1800)
             async with pool.acquire() as conn:
                 log = await conn.fetch("SELECT * FROM userss")
-            for i in log:
+            for user in log:
                 time_now = int(time.time())
-                remained_time = int(i[2]) - time_now
-                if remained_time <= 0 and i[3] == False:
+                remained_time = int(user[2]) - time_now
+                if remained_time <= 0 and user[3] == False:
                     async with pool.acquire() as conn:
-                        await conn.execute("UPDATE userss SET banned = TRUE WHERE tgid = $1", i[1])
-                    subprocess.call(f'sudo ./deleteuserfromvpn.sh {str(i[1])}', shell=True)
+                        await conn.execute("UPDATE userss SET banned = TRUE WHERE tgid = $1", user[1])
+                    subprocess.call(f'sudo ./deleteuserfromvpn.sh {str(user[1])}', shell=True)
 
-                    dateto = datetime.utcfromtimestamp(int(i[2]) + CONFIG['UTC_time'] * 3600).strftime(
+                    dateto = datetime.utcfromtimestamp(int(user[2]) + CONFIG['UTC_time'] * 3600).strftime(
                         '%d.%m.%Y %H:%M')
                     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     Butt_main.add(
@@ -1061,15 +1059,15 @@ async def checkTime():
                         types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
                     )
                     BotChecking = TeleBot(BOTAPIKEY)
-                    BotChecking.send_message(i['tgid'],
+                    BotChecking.send_message(user['tgid'],
                                              texts_for_bot["ended_sub_message"],
                                              reply_markup=Butt_main, parse_mode="HTML")
 
-                if remained_time <= 86400 and i[4] == False:
+                if remained_time <= 86400 and user[4] == False:
                     async with pool.acquire() as conn:
-                        await conn.execute(f"UPDATE userss SET notion_oneday=true where tgid=?", (i[1],))
+                        await conn.execute(f"UPDATE userss SET notion_oneday=true where tgid=?", (user[1],))
                     BotChecking = TeleBot(BOTAPIKEY)
-                    BotChecking.send_message(i['tgid'], texts_for_bot["alert_to_renew_sub"], parse_mode="HTML")
+                    BotChecking.send_message(user['tgid'], texts_for_bot["alert_to_renew_sub"], parse_mode="HTML")
 
                 # Дарим бесплатную подписку на 7 дней если он висит 3 дня как неактивный и не ливнул
                 # if remained_time <= 259200 and i['trial_continue'] == 0:
@@ -1099,12 +1097,12 @@ async def checkTime():
 async def subscription_checker():
     global pool
     while True:
-        await asyncio.sleep(6 * 3600)  # Проверка каждые 24 часа
+        await asyncio.sleep(3600)  # Проверка каждый час
 
         async with pool.acquire() as conn:
             # Получаем всех активных пользователей
             active_users = await conn.fetch(
-                "SELECT tgid FROM userss WHERE sub_promo_end > NOW()"
+                "SELECT tgid FROM userss WHERE subscription > NOW() and promo_flag = TRUE"
             )
 
             # Получаем список каналов для проверки
@@ -1133,7 +1131,7 @@ async def subscription_checker():
                     if should_revoke:
                         now = datetime.now()
                         await conn.execute(
-                            "UPDATE userss SET sub_promo_end = $1 WHERE tgid = $2",
+                            "UPDATE userss SET subscription = $1, promo_flag = false WHERE tgid = $2",
                             now,
                             user_id
                         )
@@ -1142,7 +1140,7 @@ async def subscription_checker():
                         mes = e.emojize(
                             "❌ *Доступ к VPN отозван!*\n"
                             "Причина: отписка от обязательных каналов\n\n"
-                            "Чтобы восстановить доступ, используйте /getvpn"
+                            "Чтобы восстановить доступ, подпишитесь на каналы и запустите проверку!"
                         )
 
                         await bot.send_message(
