@@ -51,6 +51,13 @@ class MyStates(StatesGroup):
 
     checkSubscription = State()
 
+    AddChannelName = State()
+    AddChannelID = State()
+    AddChannelLink = State()
+    ConfirmAddChannel = State()
+    DeleteChannels = State()
+    DeleteChannelByName = State()
+
 
 def start_postgres_container():
     client = docker.from_env()
@@ -109,10 +116,14 @@ async def main():
     # Запускаем бота
     await bot.polling(non_stop=True, interval=0, request_timeout=60, timeout=60)
 
+
 async def on_startup():
     asyncio.create_task(subscription_checker())
     print("Subscription checker started")
+
+
 bot.add_custom_filter(asyncio_filters.StateFilter(bot))
+
 
 @bot.message_handler(commands=['start'])
 async def start(message: types.Message):
@@ -361,6 +372,124 @@ async def Work_with_Message(m: types.Message):
         return
 
 
+@bot.message_handler(state=MyStates.AddChannelName, content_types=["text"])
+async def add_channel_name(m: types.Message):
+    async with bot.retrieve_data(m.from_user.id) as data:
+        data['channel_name'] = m.text
+
+    await bot.set_state(m.from_user.id, MyStates.AddChannelID)
+    await bot.send_message(m.from_user.id, "Введите ID канала (отрицательное число):")
+
+
+@bot.message_handler(state=MyStates.AddChannelID, content_types=["text"])
+async def add_channel_id(m: types.Message):
+    try:
+        channel_id = int(m.text)
+    except ValueError:
+        await bot.send_message(m.from_user.id, "ID должен быть числом! Попробуйте еще раз.")
+        return
+
+    async with bot.retrieve_data(m.from_user.id) as data:
+        data['channel_id'] = channel_id
+
+    await bot.set_state(m.from_user.id, MyStates.AddChannelLink)
+    await bot.send_message(m.from_user.id, "Введите ссылку на канал (например, https://t.me/mychannel):")
+
+
+@bot.message_handler(state=MyStates.AddChannelLink, content_types=["text"])
+async def add_channel_link(m: types.Message):
+    channel_link = m.text
+
+    async with bot.retrieve_data(m.from_user.id) as data:
+        data['channel_link'] = channel_link
+        channel_name = data['channel_name']
+        channel_id = data['channel_id']
+
+    # Подтверждение перед добавлением
+    await bot.set_state(m.from_user.id, MyStates.ConfirmAddChannel)
+    confirm_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    confirm_markup.add(types.KeyboardButton("✅ Подтвердить"))
+    confirm_markup.add(types.KeyboardButton("❌ Отмена"))
+
+    await bot.send_message(m.from_user.id,
+                           f"Вы хотите добавить канал:\n\n"
+                           f"📢 Название: <b>{channel_name}</b>\n"
+                           f"🆔 ID: <code>{channel_id}</code>\n"
+                           f"🔗 Ссылка: {channel_link}\n\n"
+                           f"Все верно?",
+                           reply_markup=confirm_markup, parse_mode="HTML")
+
+
+@bot.message_handler(state=MyStates.ConfirmAddChannel, content_types=["text"])
+async def confirm_add_channel(m: types.Message):
+    global pool
+    if m.text == "✅ Подтвердить":
+        async with bot.retrieve_data(m.from_user.id) as data:
+            channel_name = data['channel_name']
+            channel_id = data['channel_id']
+            channel_link = data['channel_link']
+
+        # Добавляем в базу данных
+        await User.AddChannels(pool, channel_id, channel_name, channel_link)
+
+        channels = await User.get_subscription_channels(pool=pool)
+        if channels:
+            channels_list = "\n".join([f"🔹 {channel['name']} | {channel['invite_link']}" for channel in channels])
+        await bot.send_message(m.from_user.id, "✅ Канал успешно добавлен! Активные каналы: \n" + channels_list,
+                               parse_mode="HTML", reply_markup=await buttons.admin_buttons())
+
+    else:
+        await bot.send_message(m.from_user.id, "❌ Добавление канала отменено.",
+                               reply_markup=await buttons.admin_buttons_channels())
+
+
+@bot.message_handler(state=MyStates.DeleteChannels, content_types=["text"])
+async def delete_channels(m: types.Message):
+    global pool
+    if m.text == "Отмена":
+            await bot.send_message(m.from_user.id, "Админ панель", reply_markup=await buttons.admin_buttons())
+            return
+    if m.text == "Удалить все каналы ❌":
+        await User.DeleteChannels(pool=pool)
+        await bot.send_message(m.from_user.id, "Каналы удалены!", reply_markup=await buttons.admin_buttons())
+        return
+    else:
+        channels = await User.get_subscription_channels(pool=pool)
+
+        if channels:
+            channels_list = "\n".join(
+                [f"🔹 <code>{channel['name']}</code> | {channel['invite_link']}" for channel in channels])
+            await bot.send_message(m.from_user.id,
+                                   f"Введите название канала, который хотите удалить:\n\n{channels_list}",
+                                   reply_markup=types.ReplyKeyboardRemove(), parse_mode="HTML")
+            await bot.set_state(m.from_user.id, MyStates.DeleteChannelByName)
+        else:
+            await bot.send_message(m.from_user.id, "❌ У вас нет добавленных каналов.",
+                                   reply_markup=types.ReplyKeyboardRemove())
+        return
+
+
+@bot.message_handler(state=MyStates.DeleteChannelByName, content_types=["text"])
+async def Work_with_Message(m: types.Message):
+    global pool
+    await bot.delete_state(m.from_user.id)
+    channel_name = m.text
+    if len(channel_name) < 1:
+        await bot.send_message(m.from_user.id, "Некорректное имя", reply_markup=await buttons.admin_buttons())
+        return
+    channel = await User.GetChannelByName(pool, channel_name)
+    if not channel:
+        await bot.send_message(m.from_user.id, "Такого канала не существует!",
+                               reply_markup=await buttons.admin_buttons())
+        return
+    await User.DeleteChannelByName(pool, channel_name)
+    await bot.send_message(
+        m.from_user.id, e.emojize(f"Канал {channel_name} удален"),
+        reply_markup=await buttons.admin_buttons_channels(),
+        parse_mode="HTML"
+    )
+
+
 @bot.message_handler(state="*", content_types=["text"])
 async def Work_with_Message(m: types.Message):
     global pool
@@ -384,13 +513,47 @@ async def Work_with_Message(m: types.Message):
         if e.demojize(m.text) == "Админ-панель :smiling_face_with_sunglasses:":
             await bot.send_message(m.from_user.id, "Админ панель", reply_markup=await buttons.admin_buttons())
             return
+
         if e.demojize(m.text) == "Главное меню :right_arrow_curving_left:":
             await bot.send_message(m.from_user.id, e.emojize("Админ-панель :smiling_face_with_sunglasses:"),
                                    reply_markup=await main_buttons(user_dat))
             return
+
         if e.demojize(m.text) == "Вывести пользователей :bust_in_silhouette:":
             await bot.send_message(m.from_user.id, e.emojize("Выберите каких пользователей хотите вывести."),
                                    reply_markup=await buttons.admin_buttons_output_users())
+            return
+
+        if e.demojize(m.text) == "Редактировать каналы":
+            # Получаем список каналов из базы данных
+            channels = await User.get_subscription_channels(pool=pool)
+
+            if channels:
+                channels_list = "\n".join([f"🔹 {channel['name']} | {channel['invite_link']}" for channel in channels])
+                message_text = f"📢 Ваши каналы:\n\n{channels_list}"
+            else:
+                message_text = "❌ У вас нет добавленных каналов."
+
+            await bot.send_message(m.from_user.id, e.emojize(message_text),
+                                   reply_markup=await buttons.admin_buttons_channels())
+            return
+
+        if e.demojize(m.text) == "Добавить канал":
+            await bot.set_state(m.from_user.id, MyStates.AddChannelName)
+            Butt_skip = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            Butt_skip.add(types.KeyboardButton(e.emojize(f"Пропустить :next_track_button:")))
+            await bot.send_message(m.from_user.id, "Введите название канала:", reply_markup=Butt_skip)
+            return
+
+        if e.demojize(m.text) == "Удалить канал":
+            await bot.set_state(m.from_user.id, MyStates.DeleteChannels)
+            Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            Butt_main.add(
+                types.KeyboardButton(e.emojize("Удалить все каналы ❌")),
+                types.KeyboardButton(e.emojize("Удалить 1 канал")),
+                types.KeyboardButton(e.emojize("Отмена"))
+            )
+            await bot.send_message(m.from_user.id, "Хотите удалить каналы?", reply_markup=Butt_main)
             return
 
         if e.demojize(m.text) == "Назад :right_arrow_curving_left:":
@@ -589,15 +752,15 @@ async def Work_with_Message(m: types.Message):
             Butt_payment.add(
                 types.InlineKeyboardButton(e.emojize(
                     f"1 мес. 📅 - {str(round(CONFIG['perc_1'] * CONFIG['one_month_cost']))} руб. Выгода {round(((1 - CONFIG['perc_1']) / 1) * 100)}%"),
-                                           callback_data="BuyMonth:1"))
+                    callback_data="BuyMonth:1"))
             Butt_payment.add(
                 types.InlineKeyboardButton(e.emojize(
                     f"3 мес. 📅 - {str(round(CONFIG['perc_3'] * CONFIG['one_month_cost']))} руб. Выгода {round(((3 - CONFIG['perc_3']) / 3) * 100)}%"),
-                                           callback_data="BuyMonth:3"))
+                    callback_data="BuyMonth:3"))
             Butt_payment.add(
                 types.InlineKeyboardButton(e.emojize(
                     f"6 мес. 📅 - {str(round(CONFIG['perc_6'] * CONFIG['one_month_cost']))} руб. Выгода {round(((6 - CONFIG['perc_6']) / 6) * 100)}%"),
-                                           callback_data="BuyMonth:6"))
+                    callback_data="BuyMonth:6"))
             await bot.send_message(m.chat.id,
                                    "<b>Оплатить можно с помощью Банковской карты!</b>\n\nВыберите на сколько месяцев хотите приобрести подписку:",
                                    reply_markup=Butt_payment, parse_mode="HTML")
@@ -646,6 +809,7 @@ async def Work_with_Message(m: types.Message):
                 readymes = (
                     f"У вас активирован доступ к ВПН до "
                     f"<b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')}</b> ✅"
+                    f"ВНИМАНИЕ! НЕ ОТПИСЫВАЙСЯ ИЛИ ВСЕ ПО ПИЗДЕ ПОЙДЕТ"
                 )
                 await bot.send_message(
                     m.chat.id,

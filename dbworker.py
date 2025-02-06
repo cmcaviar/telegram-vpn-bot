@@ -2,6 +2,8 @@ import time
 import datetime
 import subprocess
 
+from asyncpg import Pool
+
 CONFIG = {}
 
 class User:
@@ -112,9 +114,32 @@ class User:
         async with pool.acquire() as conn:
             await conn.execute("UPDATE userss SET sub_promo_end = NOW() WHERE tgid = $1", tgid)
 
-    async def get_subscription_channels(self, pool):
+    async def get_subscription_channels(pool):
         async with pool.acquire() as conn:
             return await conn.fetch("SELECT * FROM channels")
+
+    async def AddChannels(pool, channel_id, name, invite_link):
+        """Добавляет новый канал в базу данных."""
+        async with pool.acquire() as conn:
+            await conn.execute(
+               """INSERT INTO channels (channel_id, name, invite_link) 
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (channel_id) DO NOTHING;""",
+                    channel_id, name, invite_link
+                )
+
+    async def DeleteChannels(pool):
+        async with pool.acquire() as conn:
+            await conn.execute(
+               "DELETE FROM channels;")
+
+    async def GetChannelByName(pool, name):
+        async with pool.acquire() as conn:
+            return await conn.fetch("SELECT * FROM channels WHERE name = $1", name)
+
+    async def DeleteChannelByName(pool, name):
+        async with pool.acquire() as conn:
+            return await conn.execute("DELETE FROM channels WHERE name = $1", name)
 
     async def get_user_subscription_end(self, pool, tgid: int) -> datetime:
         self = User()

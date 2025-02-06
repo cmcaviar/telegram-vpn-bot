@@ -43,6 +43,7 @@ async def admin_buttons():
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Вывести пользователей :bust_in_silhouette:")))
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Редактировать пользователя по id :pencil:")))
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Статичные пользователи")))
+    Butt_admin.add(types.KeyboardButton(e.emojize(f"Редактировать каналы")))
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Продлить пробный период")))
     Butt_admin.add(types.KeyboardButton(e.emojize("Главное меню :right_arrow_curving_left:")))
     return Butt_admin
@@ -51,6 +52,13 @@ async def admin_buttons_output_users():
     Butt_admin = types.ReplyKeyboardMarkup(resize_keyboard=True)
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Пользователей с подпиской")))
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Всех пользователей")))
+    Butt_admin.add(types.KeyboardButton(e.emojize("Назад :right_arrow_curving_left:")))
+    return Butt_admin
+
+async def admin_buttons_channels():
+    Butt_admin = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    Butt_admin.add(types.KeyboardButton(e.emojize(f"Добавить канал")))
+    Butt_admin.add(types.KeyboardButton(e.emojize(f"Удалить канал")))
     Butt_admin.add(types.KeyboardButton(e.emojize("Назад :right_arrow_curving_left:")))
     return Butt_admin
 
