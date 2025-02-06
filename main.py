@@ -1,7 +1,7 @@
 import json
 import string
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 import asyncpg
@@ -49,6 +49,8 @@ class MyStates(StatesGroup):
 
     AdminNewUser = State()
 
+    checkSubscription = State()
+
 
 def start_postgres_container():
     client = docker.from_env()
@@ -79,24 +81,16 @@ async def create_db_pool():
         max_size=10
     )
 
+
 async def run_migrations():
-    print('начинаем миграцию')
     db_url = "postgresql://user:1231234@localhost:5432/vpn-bot"
     backend = get_backend(db_url)
     migrations = read_migrations("my_migrations")
 
-    # Получаем список уже применённых миграций
-    applied_migrations = backend.get_applied_migration_hashes()  # Получаем множество применённых хэшей
+    with backend.lock():
+        backend.apply_migrations(backend.to_apply(migrations))
 
-    # Фильтруем только неприменённые миграции
-    migrations_to_apply = [m for m in migrations if m.hash not in applied_migrations]
-
-    # Применяем только новые миграции
-    if migrations_to_apply:
-        backend.apply_migrations(migrations_to_apply)
-        print("Новые миграции успешно применены.")
-    else:
-        print("Все миграции уже применены, ничего делать не нужно.")
+    print("Все миграции успешно применены")
 
 
 async def main():
@@ -115,6 +109,10 @@ async def main():
     # Запускаем бота
     await bot.polling(non_stop=True, interval=0, request_timeout=60, timeout=60)
 
+async def on_startup():
+    asyncio.create_task(subscription_checker())
+    print("Subscription checker started")
+bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
 @bot.message_handler(commands=['start'])
 async def start(message: types.Message):
@@ -166,6 +164,7 @@ async def Work_with_Message(m: types.Message):
         return
 
 
+# Обнуление времени пользователю
 @bot.message_handler(state=MyStates.editUserResetTime, content_types=["text"])
 async def Work_with_Message(m: types.Message):
     global pool
@@ -173,7 +172,7 @@ async def Work_with_Message(m: types.Message):
         tgid = data['usertgid']
 
     if e.demojize(m.text) == "Да":
-        now = str(int(time.time()))
+        now = datetime.now()
         async with pool.acquire() as conn:  # Получаем соединение из пула
             await conn.execute(
                 "UPDATE userss SET subscription = $1, banned = false, notion_oneday = true WHERE tgid = $2",
@@ -188,14 +187,18 @@ async def Work_with_Message(m: types.Message):
 
     readymes = f"Пользователь: <b>{str(user_dat.fullname)}</b> ({str(user_dat.username)})\nTG-id: <code>{str(user_dat.tgid)}</code>\n\n"
 
-    if int(user_dat.subscription) > int(time.time()):
-        readymes += f"Подписка: до <b>{datetime.utcfromtimestamp(int(user_dat.subscription) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}</b> :check_mark_button:"
+    if user_dat.subscription > datetime.now():
+        readymes += f"Подписка: до <b>{(user_dat.subscription + timedelta(hours=CONFIG['UTC_time'])).strftime('%d.%m.%Y %H:%M')}</b> ✅"
     else:
-        readymes += f"Подписка: закончилась <b>{datetime.utcfromtimestamp(int(user_dat.subscription) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}</b> :cross_mark:"
+        readymes += f"Подписка: закончилась <b>{(user_dat.subscription + timedelta(hours=CONFIG['UTC_time'])).strftime('%d.%m.%Y %H:%M')}</b> ❌"
+
     await bot.set_state(m.from_user.id, MyStates.editUser)
 
-    await bot.send_message(m.from_user.id, e.emojize(readymes),
-                           reply_markup=await buttons.admin_buttons_edit_user(user_dat), parse_mode="HTML")
+    await bot.send_message(
+        m.from_user.id, e.emojize(readymes),
+        reply_markup=await buttons.admin_buttons_edit_user(user_dat),
+        parse_mode="HTML"
+    )
 
 
 @bot.message_handler(state=MyStates.UserAddTimeDays, content_types=["text"])
@@ -291,14 +294,18 @@ async def Work_with_Message(m: types.Message):
     user_dat = await User.GetInfo(pool=pool, tgid=tgid)
     readymes = f"Пользователь: <b>{str(user_dat.fullname)}</b> ({str(user_dat.username)})\nTG-id: <code>{str(user_dat.tgid)}</code>\n\n"
 
-    if int(user_dat.subscription) > int(time.time()):
-        readymes += f"Подписка: до <b>{datetime.utcfromtimestamp(int(user_dat.subscription) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}</b> :check_mark_button:"
+    if user_dat.subscription > datetime.now():
+        readymes += f"Подписка: до <b>{(user_dat.subscription + timedelta(hours=CONFIG['UTC_time'])).strftime('%d.%m.%Y %H:%M')}</b> ✅"
     else:
-        readymes += f"Подписка: закончилась <b>{datetime.utcfromtimestamp(int(user_dat.subscription) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}</b> :cross_mark:"
+        readymes += f"Подписка: закончилась <b>{(user_dat.subscription + timedelta(hours=CONFIG['UTC_time'])).strftime('%d.%m.%Y %H:%M')}</b> ❌"
+
     await bot.set_state(m.from_user.id, MyStates.editUser)
 
-    await bot.send_message(m.from_user.id, e.emojize(readymes),
-                           reply_markup=await buttons.admin_buttons_edit_user(user_dat), parse_mode="HTML")
+    await bot.send_message(
+        m.from_user.id, e.emojize(readymes),
+        reply_markup=await buttons.admin_buttons_edit_user(user_dat),
+        parse_mode="HTML"
+    )
 
 
 @bot.message_handler(state=MyStates.findUserViaId, content_types=["text"])
@@ -318,15 +325,20 @@ async def Work_with_Message(m: types.Message):
 
     readymes = f"Пользователь: <b>{str(user_dat.fullname)}</b> ({str(user_dat.username)})\nTG-id: <code>{str(user_dat.tgid)}</code>\n\n"
 
-    if int(user_dat.subscription) > int(time.time()):
-        readymes += f"Подписка: до <b>{datetime.utcfromtimestamp(int(user_dat.subscription) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}</b> :check_mark_button:"
+    if user_dat.subscription > datetime.now():
+        readymes += f"Подписка: до <b>{(user_dat.subscription + timedelta(hours=CONFIG['UTC_time'])).strftime('%d.%m.%Y %H:%M')}</b> ✅"
     else:
-        readymes += f"Подписка: закончилась <b>{datetime.utcfromtimestamp(int(user_dat.subscription) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}</b> :cross_mark:"
+        readymes += f"Подписка: закончилась <b>{(user_dat.subscription + timedelta(hours=CONFIG['UTC_time'])).strftime('%d.%m.%Y %H:%M')}</b> ❌"
+
     await bot.set_state(m.from_user.id, MyStates.editUser)
     async with bot.retrieve_data(m.from_user.id) as data:
         data['usertgid'] = user_dat.tgid
-    await bot.send_message(m.from_user.id, e.emojize(readymes),
-                           reply_markup=await buttons.admin_buttons_edit_user(user_dat), parse_mode="HTML")
+
+    await bot.send_message(
+        m.from_user.id, e.emojize(readymes),
+        reply_markup=await buttons.admin_buttons_edit_user(user_dat),
+        parse_mode="HTML"
+    )
 
 
 @bot.message_handler(state=MyStates.AdminNewUser, content_types=["text"])
@@ -389,31 +401,51 @@ async def Work_with_Message(m: types.Message):
             allusers = await user_dat.GetAllUsers(pool=pool)
             readymass = []
             readymes = ""
+
             for user in allusers:
-                if int(user[2]) > int(time.time()):
-                    if len(readymes) + len(f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>) :check_mark_button:\n") > 4090:
-                        readymass.append(readymes)
-                        readymes = ""
-                    readymes += f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>) :check_mark_button:\n"
+
+                sub_end_promo = user.get('sub_promo_end')
+                sub_end_paid = user.get('subscription')
+
+                if sub_end_promo:
+                    sub_end_promo += timedelta(hours=CONFIG['UTC_time'])
+                if sub_end_paid:
+                    sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
+
+                # Определяем, какая дата позже
+                latest_sub_end = max(filter(None, [sub_end_promo, sub_end_paid]), default=None)
+
+                if user[2] > datetime.utcnow():  # Сравниваем как datetime
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ✅ до {latest_sub_end}\n"
                 else:
-                    if len(readymes) + len(f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>)\n") > 4090:
-                        readymass.append(readymes)
-                        readymes = ""
-                    readymes += f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>)\n"
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ закончилась {latest_sub_end}\n"
+
+                if len(readymes) + len(user_info) > 4090:
+                    readymass.append(readymes)
+                    readymes = ""
+
+                readymes += user_info
+
             readymass.append(readymes)
+
             for user in readymass:
-                await bot.send_message(m.from_user.id, e.emojize(user), reply_markup=await buttons.admin_buttons(),
-                                       parse_mode="HTML")
+                await bot.send_message(
+                    m.from_user.id,
+                    e.emojize(user),
+                    reply_markup=await buttons.admin_buttons(),
+                    parse_mode="HTML"
+                )
             return
 
         if e.demojize(m.text) == "Продлить пробный период":
             async with pool.acquire() as conn:
                 log = await conn.fetch("SELECT * FROM userss WHERE banned = TRUE AND username <> '@None'")
 
-            timetoadd = 7 * 60 * 60 * 24
+            timetoadd = timedelta(days=1)  # 3 дня
             countSended = 0
             countBlocked = 0
             BotChecking = TeleBot(BOTAPIKEY)
+
             for user in log:
                 try:
                     countSended += 1
@@ -421,32 +453,38 @@ async def Work_with_Message(m: types.Message):
                         await conn.execute(
                             """
                             UPDATE userss 
-                            SET subscription = $1, banned = FALSE, notion_oneday = FALSE 
+                            SET subscription = NOW() + $1, banned = FALSE, notion_oneday = FALSE 
                             WHERE tgid = $2
                             """,
-                            str(int(time.time()) + timetoadd),
+                            timetoadd,
                             user["tgid"]
                         )
-                    subprocess.call(f'./addusertovpn.sh {str(user["tgid"])}', shell=True)
+                    subprocess.call(f'./addusertovpn.sh {user["tgid"]}', shell=True)
 
                     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     Butt_main.add(
                         types.KeyboardButton(e.emojize("Продлить :money_bag:")),
                         types.KeyboardButton(e.emojize("Как подключить :gear:"))
                     )
+                    Butt_main.add(
+                        types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
+                    )
 
                     # Отправляем сообщение пользователю
                     await asyncio.to_thread(bot.send_message, user["tgid"],
                                             texts_for_bot["alert_to_extend_sub"],
                                             reply_markup=Butt_main, parse_mode="HTML")
-                except:
+                except Exception as ex:
                     countSended -= 1
                     countBlocked += 1
-                    print(f"Ошибка у пользователя {user['tgid']}: {e}")
+                    print(f"Ошибка у пользователя {user['tgid']}: {ex}")
                     pass
-            BotChecking.send_message(CONFIG['admin_tg_id'],
-                                        f"Добавлен пробный период {countSended} пользователям. {countBlocked} пользователей заблокировало бота", parse_mode="HTML")
-        
+
+            BotChecking.send_message(
+                CONFIG['admin_tg_id'],
+                f"Добавлен пробный период {countSended} пользователям. {countBlocked} пользователей заблокировало бота",
+                parse_mode="HTML"
+            )
         if e.demojize(m.text) == "Уведомление об обновлении":
             async with pool.acquire() as conn:
                 log = await conn.fetch("SELECT * FROM userss WHERE username <> '@None'")
@@ -460,6 +498,9 @@ async def Work_with_Message(m: types.Message):
                     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     Butt_main.add(types.KeyboardButton(e.emojize(f"Продлить :money_bag:")),
                                   types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
+                    Butt_main.add(
+                        types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
+                    )
                     BotChecking.send_message(user['tgid'],
                                              texts_for_bot["alert_to_update"],
                                              reply_markup=Butt_main, parse_mode="HTML")
@@ -481,12 +522,26 @@ async def Work_with_Message(m: types.Message):
                                        reply_markup=await buttons.admin_buttons(), parse_mode="HTML")
                 return
             for user in allusers:
-                if int(user[2]) > int(time.time()):
-                    if len(readymes) + len(
-                            f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>) - {datetime.utcfromtimestamp(int(user[2]) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}\n\n") > 4090:
+                sub_end_promo = user.get('sub_promo_end')
+                sub_end_paid = user.get('subscription')
+
+                if sub_end_promo:
+                    sub_end_promo += timedelta(hours=CONFIG['UTC_time'])
+                if sub_end_paid:
+                    sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
+
+                # Определяем, какая дата позже
+                latest_sub_end = max(filter(None, [sub_end_promo, sub_end_paid]), default=None)
+                if latest_sub_end > datetime.utcnow():  # Сравниваем корректно с datetime.utcnow()
+
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) - {latest_sub_end}\n\n"
+
+                    if len(readymes) + len(user_info) > 4090:
                         readymass.append(readymes)
                         readymes = ""
-                    readymes += f"{user[6]} ({user[5]}|<code>{str(user[1])}</code>) - {datetime.utcfromtimestamp(int(user[2]) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')}\n\n"
+
+                    readymes += user_info
+
             readymass.append(readymes)
             for user in readymass:
                 await bot.send_message(m.from_user.id, e.emojize(user), parse_mode="HTML")
@@ -563,6 +618,108 @@ async def Work_with_Message(m: types.Message):
         else:
             await bot.send_message(chat_id=m.chat.id, text="Сначала нужно купить подписку!")
 
+    if e.demojize(m.text) == "Получить бесплатный ВПН":
+        now = datetime.now()
+
+        async with pool.acquire() as conn:
+
+            # Получаем данные о подписке
+            user_dat = await conn.fetchrow(
+                "SELECT sub_promo_end, subscription FROM userss WHERE tgid = $1",
+                user_dat.tgid
+            )
+
+        # Проверяем активную подписку
+        if user_dat:
+            sub_end_promo = user_dat.get('sub_promo_end')
+            sub_end_paid = user_dat.get('subscription')
+
+            if sub_end_promo:
+                sub_end_promo += timedelta(hours=CONFIG['UTC_time'])
+            if sub_end_paid:
+                sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
+
+            # Определяем, какая дата позже
+            latest_sub_end = max(filter(None, [sub_end_promo, sub_end_paid]), default=None)
+
+            if latest_sub_end and latest_sub_end > now:
+                readymes = (
+                    f"У вас активирован доступ к ВПН до "
+                    f"<b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')}</b> ✅"
+                )
+                await bot.send_message(
+                    m.chat.id,
+                    e.emojize(readymes),
+                    parse_mode="HTML"
+                )
+                return
+
+        # Если подписки нет - показываем каналы
+        async with pool.acquire() as conn:
+            channels = await conn.fetch("SELECT * FROM channels")
+
+        if not channels:
+            await bot.send_message(user_dat.tgid, "Пока нет промо-предложений")
+            return
+
+        channels_text = "\n".join(
+            f"➡️ {channel['name']} - {channel['invite_link']}"
+            for channel in channels
+        )
+
+        await bot.send_message(
+            m.chat.id,
+            e.emojize(
+                f"📢 Для доступа к VPN подпишитесь на каналы:\n{channels_text}\n"
+                "После подписки нажмите кнопку ниже 👇"
+            ),
+            reply_markup=types.InlineKeyboardMarkup().add(
+                types.InlineKeyboardButton(
+                    "✅ Я подписался",
+                    callback_data="checkSubscription"
+                )
+            )
+        )
+
+        await bot.set_state(m.from_user.id, MyStates.checkSubscription)
+        async with bot.retrieve_data(m.from_user.id) as data:
+            data['channels'] = [dict(channel) for channel in channels]
+
+
+@bot.callback_query_handler(func=lambda call: 'checkSubscription' in call.data)
+async def check_subscription_handler(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    global pool
+    async with bot.retrieve_data(user_id, chat_id) as data:
+        channels = data['channels']
+
+    unsubscribed = []
+    for channel in channels:
+        try:
+            member = await bot.get_chat_member(chat_id=channel['channel_id'], user_id=user_id)
+            if member.status not in ['member', 'administrator', 'creator']:
+                unsubscribed.append(channel)
+        except Exception as e:
+            await bot.answer_callback_query(call.id, "❌ Ошибка проверки подписки!")
+            return
+
+    if unsubscribed:
+        text = "Вы не подписаны на:\n" + "\n".join(
+            [f"• {channel['name']}" for channel in unsubscribed]
+        )
+        await bot.answer_callback_query(call.id, "Подпишитесь на все каналы!")
+        await bot.send_message(chat_id, text)
+    else:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE userss SET sub_promo_end = NOW() + INTERVAL '1 day' * $1 WHERE tgid = $2",
+                3, user_id
+            )
+
+        await bot.send_message(chat_id, "✅ Доступ к VPN активирован на 3 дня!")
+        await bot.delete_state(user_id, chat_id)
+
 
 @bot.callback_query_handler(func=lambda c: 'BuyMonth:' in c.data)
 async def Buy_month(call: types.CallbackQuery):
@@ -595,43 +752,49 @@ async def AddTimeToUser(tgid, timetoadd):
     userdat = await User.GetInfo(pool=pool, tgid=tgid)
     async with pool.acquire() as conn:
         # Проверяем, истекла ли подписка
-        if int(userdat.subscription) < int(time.time()):
-            passdat = int(time.time()) + timetoadd
+        if userdat.subscription < datetime.now():
+            passdat = datetime.now() + timedelta(seconds=timetoadd)
             await conn.execute(
                 """
                 UPDATE userss 
                 SET subscription = $1, banned = FALSE, notion_oneday = FALSE 
                 WHERE tgid = $2
                 """,
-                str(passdat), userdat.tgid
+                passdat, userdat.tgid
             )
-            subprocess.call(f'./addusertovpn.sh {str(userdat.tgid)}', shell=True)
+            subprocess.call(f'./addusertovpn.sh {userdat.tgid}', shell=True)
 
             # Отправляем сообщение пользователю
             await asyncio.to_thread(bot.send_message, userdat.tgid, e.emojize(
                 'Данные для входа были обновлены, скачайте новый файл авторизации через раздел "Как подключить :gear:"'
             ))
-
         else:
-            passdat = int(userdat.subscription) + timetoadd
+            passdat = userdat.subscription + timedelta(seconds=timetoadd)
             await conn.execute(
                 """
                 UPDATE userss 
                 SET subscription = $1, notion_oneday = FALSE 
                 WHERE tgid = $2
                 """,
-                str(passdat), userdat.tgid
+                passdat, userdat.tgid
             )
 
     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    dateto = datetime.utcfromtimestamp(int(passdat) + CONFIG['UTC_time'] * 3600).strftime('%d.%m.%Y %H:%M')
-    timenow = int(time.time())
-    if int(passdat) >= timenow:
-        Butt_main.add(
-            types.KeyboardButton(e.emojize(f":green_circle: До: {dateto} МСК:green_circle:")))
+    dateto = passdat.strftime('%d.%m.%Y %H:%M')
 
-    Butt_main.add(types.KeyboardButton(e.emojize(f"Продлить :money_bag:")),
-                  types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
+    if passdat >= datetime.now():
+        Butt_main.add(
+            types.KeyboardButton(e.emojize(f":green_circle: До: {dateto} МСК :green_circle:"))
+        )
+
+    Butt_main.add(
+        types.KeyboardButton(e.emojize("Продлить :money_bag:")),
+        types.KeyboardButton(e.emojize("Как подключить :gear:"))
+
+    )
+    Butt_main.add(
+        types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
+    )
 
 
 @bot.callback_query_handler(func=lambda c: 'DELETE:' in c.data or 'DELETYES:' in c.data or 'DELETNO:' in c.data)
@@ -730,6 +893,9 @@ async def checkTime():
                         types.KeyboardButton(e.emojize(f":red_circle: Закончилась: {dateto} МСК:red_circle:")))
                     Butt_main.add(types.KeyboardButton(e.emojize(f"Продлить :money_bag:")),
                                   types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
+                    Butt_main.add(
+                        types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
+                    )
                     BotChecking = TeleBot(BOTAPIKEY)
                     BotChecking.send_message(i['tgid'],
                                              texts_for_bot["ended_sub_message"],
@@ -764,6 +930,65 @@ async def checkTime():
         except Exception as err:
             print(err)
             pass
+
+
+async def subscription_checker():
+    global pool
+    while True:
+        await asyncio.sleep(6 * 3600)  # Проверка каждые 24 часа
+
+        async with pool.acquire() as conn:
+            # Получаем всех активных пользователей
+            active_users = await conn.fetch(
+                "SELECT tgid FROM userss WHERE sub_promo_end > NOW()"
+            )
+
+            # Получаем список каналов для проверки
+            channels = await conn.fetch("SELECT * FROM channels")
+
+            for user in active_users:
+                try:
+                    should_revoke = False
+                    user_id = user['tgid']
+
+                    # Проверяем подписки на все каналы
+                    for channel in channels:
+                        try:
+                            member = await bot.get_chat_member(
+                                chat_id=channel['channel_id'],
+                                user_id=user_id
+                            )
+                            if member.status not in ['member', 'administrator', 'creator']:
+                                should_revoke = True
+                                break
+                        except Exception as err:
+                            print(f"Ошибка проверки канала: {err}")
+                            continue
+
+                    # Если не подписан на какой-то канал
+                    if should_revoke:
+                        now = datetime.now()
+                        await conn.execute(
+                            "UPDATE userss SET sub_promo_end = $1 WHERE tgid = $2",
+                            now,
+                            user_id
+                        )
+
+                        # Форматируем сообщение
+                        mes = e.emojize(
+                            "❌ *Доступ к VPN отозван!*\n"
+                            "Причина: отписка от обязательных каналов\n\n"
+                            "Чтобы восстановить доступ, используйте /getvpn"
+                        )
+
+                        await bot.send_message(
+                            user_id,
+                            mes,
+                            parse_mode="Markdown"
+                        )
+
+                except Exception as err:
+                    print(f"Ошибка обработки пользователя {user_id}: {err}")
 
 
 if __name__ == '__main__':

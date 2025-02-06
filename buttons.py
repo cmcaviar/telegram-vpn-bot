@@ -8,20 +8,31 @@ CONFIG={}
 
 async def main_buttons(user: User):
     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    if user.subscription != "none":
-        dateto = datetime.utcfromtimestamp(int(user.subscription)+CONFIG["UTC_time"]*3600).strftime('%d.%m.%Y %H:%M')
-        timenow = int(time.time())
-        #print(datetime.utcfromtimestamp(timenow).strftime('%Y-%m-%d %H:%M'))
-        if int(user.subscription)<timenow:
+
+    if user.subscription is not None:
+        # Преобразуем subscription в datetime, если он не None
+        sub_time = user.subscription  # subscription теперь уже datetime (TIMESTAMP в БД)
+        timenow = datetime.now()
+
+        dateto = sub_time.strftime('%d.%m.%Y %H:%M')
+
+        if sub_time < timenow:
             Butt_main.add(types.KeyboardButton(e.emojize(f":red_circle: Закончилась: {dateto} МСК:red_circle:")))
-        if int(user.subscription)>=timenow:
+        else:
             Butt_main.add(types.KeyboardButton(e.emojize(f":green_circle: До: {dateto} МСК:green_circle:")))
 
-        Butt_main.add(types.KeyboardButton(e.emojize(f"Продлить :money_bag:")),types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
+        Butt_main.add(
+            types.KeyboardButton(e.emojize(f"Продлить :money_bag:")),
+            types.KeyboardButton(e.emojize(f"Как подключить :gear:"))
+        )
+        Butt_main.add(
+            types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
+        )
 
-        if CONFIG["admin_tg_id"] == user.tgid:
-            Butt_main.add(types.KeyboardButton(e.emojize(f"Админ-панель :smiling_face_with_sunglasses:")))
-        return Butt_main
+    if CONFIG["admin_tg_id"] == user.tgid:
+        Butt_main.add(types.KeyboardButton(e.emojize(f"Админ-панель :smiling_face_with_sunglasses:")))
+
+    return Butt_main
 
 
 
@@ -54,7 +65,7 @@ async def admin_buttons_static_users():
 async def admin_buttons_edit_user(user: User):
     Butt_admin = types.ReplyKeyboardMarkup(resize_keyboard=True)
     Butt_admin.add(types.KeyboardButton(e.emojize(f"Добавить время")))
-    if int(user.subscription) > int(time.time()):
+    if user.subscription > datetime.now():
         Butt_admin.add(types.KeyboardButton(e.emojize(f"Обнулить время")))
     Butt_admin.add(types.KeyboardButton(e.emojize("Назад :right_arrow_curving_left:")))
     return Butt_admin

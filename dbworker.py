@@ -1,4 +1,5 @@
 import time
+import datetime
 import subprocess
 
 CONFIG = {}
@@ -64,12 +65,15 @@ class User:
     async def Adduser(self, pool, username, full_name):
         """Добавляет нового пользователя в базу данных."""
         if not self.registered:
+            trial_days = int(CONFIG['trial_period'])
+            subscription_expires = datetime.datetime.now() + datetime.timedelta(days=trial_days)
+
             async with pool.acquire() as conn:
                 await conn.execute(
                     """INSERT INTO userss (tgid, subscription, username, fullname) 
                     VALUES ($1, $2, $3, $4)
                     ON CONFLICT (tgid) DO NOTHING;""",
-                    self.tgid, str(int(time.time()) + int(CONFIG['trial_period']) * 86400), username, full_name
+                    self.tgid, subscription_expires, username, full_name
                 )
             subprocess.call(f'./addusertovpn.sh {str(self.tgid)}', shell=True)
             self.registered = True
@@ -82,12 +86,44 @@ class User:
     async def GetAllUsersWithSub(self, pool):
         """Получает пользователей с активной подпиской."""
         async with pool.acquire() as conn:
-            return await conn.fetch("SELECT * FROM userss WHERE subscription > $1", str(int(time.time())))
+            return await conn.fetch(
+                "SELECT * FROM userss WHERE subscription > $1",
+                datetime.datetime.now()
+            )
 
     async def GetAllUsersWithoutSub(self, pool):
         """Получает пользователей без подписки."""
         async with pool.acquire() as conn:
             return await conn.fetch("SELECT * FROM userss WHERE banned = TRUE AND username <> '@None'")
+
+
+    async def grant_vpn_access(self, pool, tgid, days: int):
+        self = User()
+        self.tgid = tgid
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE userss SET sub_promo_end = NOW() + INTERVAL '1 day' * $1 WHERE tgid = $2",
+                days, tgid
+            )
+
+    async def revoke_vpn_access(self, pool, tgid: int):
+        self = User()
+        self.tgid = tgid
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE userss SET sub_promo_end = NOW() WHERE tgid = $1", tgid)
+
+    async def get_subscription_channels(self, pool):
+        async with pool.acquire() as conn:
+            return await conn.fetch("SELECT * FROM channels")
+
+    async def get_user_subscription_end(self, pool, tgid: int) -> datetime:
+        self = User()
+        self.tgid = tgid
+        async with pool.acquire() as conn:
+            return await conn.fetch(
+            "SELECT sub_promo_end FROM userss WHERE tgid = $1",
+            tgid
+        )
 
     async def CheckNewNickname(self, pool, message):
         """Проверяет изменение никнейма и имени у пользователя."""

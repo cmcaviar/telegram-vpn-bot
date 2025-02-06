@@ -13,7 +13,9 @@ steps = [
         CREATE TABLE IF NOT EXISTS userss (
             id SERIAL PRIMARY KEY,
             tgid BIGINT NOT NULL UNIQUE,
-            subscription TEXT,
+            subscription TIMESTAMP,
+            sub_promo_start TIMESTAMP,
+            sub_promo_end TIMESTAMP,
             banned BOOLEAN DEFAULT FALSE,
             notion_oneday BOOLEAN DEFAULT TRUE,
             username TEXT,
@@ -47,6 +49,16 @@ steps = [
         );
         """,
         "DROP TABLE static_profiles;"
+    ),
+    step(
+        """
+        CREATE TABLE IF NOT EXISTS channels (
+            channel_id BIGINT PRIMARY KEY,
+            name TEXT NOT NULL,
+            invite_link TEXT NOT NULL
+        );
+        """,
+        "DROP TABLE channels;"
     ),
 
     # Создание уникального индекса для tgid в userss
