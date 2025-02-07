@@ -1,6 +1,7 @@
 import json
 import string
 import subprocess
+import pytz
 from datetime import datetime, timedelta
 import time
 
@@ -35,6 +36,8 @@ with open("texts.json", encoding="utf-8") as file_handler:
 BOTAPIKEY = CONFIG["tg_token"]
 
 bot = AsyncTeleBot(CONFIG["tg_token"], state_storage=StateMemoryStorage())
+# Часовой пояс UTC+3
+UTC_PLUS_3 = pytz.timezone('Europe/Moscow')  # Москва в UTC+3
 
 
 class MyStates(StatesGroup):
@@ -179,7 +182,7 @@ async def Work_with_Message(m: types.Message):
         tgid = data['usertgid']
 
     if e.demojize(m.text) == "Да":
-        now = datetime.now()
+        now = datetime.now(pytz.utc).astimezone(UTC_PLUS_3)
         async with pool.acquire() as conn:  # Получаем соединение из пула
             await conn.execute(
                 "UPDATE userss SET subscription = $1, banned = false, notion_oneday = true WHERE tgid = $2",
@@ -332,7 +335,7 @@ async def Work_with_Message(m: types.Message):
 
     readymes = f"Пользователь: <b>{str(user_dat.fullname)}</b> ({str(user_dat.username)})\nTG-id: <code>{str(user_dat.tgid)}</code>\n\n"
 
-    if user_dat.subscription > datetime.now():
+    if user_dat.subscription > datetime.now(pytz.utc).astimezone(UTC_PLUS_3):
         readymes += f"Подписка: до <b>{(user_dat.subscription + timedelta(hours=CONFIG['UTC_time'])).strftime('%d.%m.%Y %H:%M')}</b> ✅"
     else:
         readymes += f"Подписка: закончилась <b>{(user_dat.subscription + timedelta(hours=CONFIG['UTC_time'])).strftime('%d.%m.%Y %H:%M')}</b> ❌"
@@ -564,22 +567,23 @@ async def Work_with_Message(m: types.Message):
             readymes = ""
 
             for user in allusers:
-
                 sub_trial = user.get('sub_trial')
                 sub_end_paid = user.get('subscription')
 
                 if sub_trial:
-                    sub_trial += timedelta(hours=CONFIG['UTC_time'])
+                    sub_trial = sub_trial.replace(tzinfo=pytz.utc).astimezone(UTC_PLUS_3)
                 if sub_end_paid:
-                    sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
+                    sub_end_paid = sub_end_paid.replace(tzinfo=pytz.utc).astimezone(UTC_PLUS_3)
 
                 # Определяем, какая дата позже
                 latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
 
-                if user[2] > datetime.utcnow():  # Сравниваем как datetime
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ✅ до {latest_sub_end}\n"
+                now_utc3 = datetime.now(pytz.utc).astimezone(UTC_PLUS_3)  # Текущее время в UTC+3
+
+                if latest_sub_end and latest_sub_end > now_utc3:
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ✅ до {latest_sub_end.strftime('%d.%m.%Y %H:%M')}\n"
                 else:
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ закончилась {latest_sub_end}\n"
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ закончилась {latest_sub_end.strftime('%d.%m.%Y %H:%M') if latest_sub_end else '—'}\n"
 
                 if len(readymes) + len(user_info) > 4090:
                     readymass.append(readymes)
@@ -614,7 +618,9 @@ async def Work_with_Message(m: types.Message):
                         await conn.execute(
                             """
                             UPDATE userss 
-                            SET subscription = NOW() + $1, banned = FALSE, notion_oneday = FALSE 
+                            SET subscription = TIMEZONE('UTC', NOW()) + $1, 
+                                banned = FALSE, 
+                                notion_oneday = FALSE 
                             WHERE tgid = $2
                             """,
                             timetoadd,
@@ -622,6 +628,7 @@ async def Work_with_Message(m: types.Message):
                         )
                     subprocess.call(f'./addusertovpn.sh {user["tgid"]}', shell=True)
 
+                    # Создаем клавиатуру
                     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     Butt_main.add(
                         types.KeyboardButton(e.emojize("Продлить :money_bag:")),
@@ -631,10 +638,16 @@ async def Work_with_Message(m: types.Message):
                         types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
                     )
 
-                    # Отправляем сообщение пользователю
-                    await asyncio.to_thread(bot.send_message, user["tgid"],
-                                            texts_for_bot["alert_to_extend_sub"],
-                                            reply_markup=Butt_main, parse_mode="HTML")
+                    # Отправляем сообщение пользователю через `asyncio.create_task`, чтобы не блокировать цикл
+                    asyncio.create_task(
+                        bot.send_message(
+                            user["tgid"],
+                            texts_for_bot["alert_to_extend_sub"],
+                            reply_markup=Butt_main,
+                            parse_mode="HTML"
+                        )
+                    )
+
                 except Exception as ex:
                     countSended -= 1
                     countBlocked += 1
@@ -683,25 +696,29 @@ async def Work_with_Message(m: types.Message):
                                        reply_markup=await buttons.admin_buttons(), parse_mode="HTML")
                 return
             for user in allusers:
+                MOSCOW_TZ = pytz.timezone("Europe/Moscow")
                 sub_trial = user.get('sub_trial')
                 sub_end_paid = user.get('subscription')
 
+                # Приводим даты к часовому поясу UTC+3
                 if sub_trial:
-                    sub_trial += timedelta(hours=CONFIG['UTC_time'])
+                    sub_trial = sub_trial.replace(tzinfo=pytz.utc).astimezone(MOSCOW_TZ)
                 if sub_end_paid:
-                    sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
+                    sub_end_paid = sub_end_paid.replace(tzinfo=pytz.utc).astimezone(MOSCOW_TZ)
 
                 # Определяем, какая дата позже
                 latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
-                if latest_sub_end > datetime.utcnow():  # Сравниваем корректно с datetime.utcnow()
 
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) - {latest_sub_end}\n\n"
+                if latest_sub_end and latest_sub_end > datetime.now(MOSCOW_TZ):  # Сравниваем в одном часовом поясе
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) - {latest_sub_end.strftime('%d.%m.%Y %H:%M')}\n\n"
+                else:
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ Закончилась {latest_sub_end.strftime('%d.%m.%Y %H:%M') if latest_sub_end else 'неизвестно'}\n\n"
 
-                    if len(readymes) + len(user_info) > 4090:
-                        readymass.append(readymes)
-                        readymes = ""
+                if len(readymes) + len(user_info) > 4090:
+                    readymass.append(readymes)
+                    readymes = ""
 
-                    readymes += user_info
+                readymes += user_info
 
             readymass.append(readymes)
             for user in readymass:
@@ -791,23 +808,27 @@ async def Work_with_Message(m: types.Message):
             )
 
         # Проверяем активную подписку
+        MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+        UTC_TZ = pytz.utc
+
         if user_dat:
             sub_trial = user_dat.get('sub_trial')
             sub_end_paid = user_dat.get('subscription')
 
+            # Приводим к UTC+3, если дата существует
             if sub_trial:
-                sub_trial += timedelta(hours=CONFIG['UTC_time'])
+                sub_trial = sub_trial.replace(tzinfo=UTC_TZ).astimezone(MOSCOW_TZ)
             if sub_end_paid:
-                sub_end_paid += timedelta(hours=CONFIG['UTC_time'])
+                sub_end_paid = sub_end_paid.replace(tzinfo=UTC_TZ).astimezone(MOSCOW_TZ)
 
             # Определяем, какая дата позже
             latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
 
-            if latest_sub_end and latest_sub_end > now:
+            if latest_sub_end and latest_sub_end > datetime.now(MOSCOW_TZ):  # Сравниваем корректно в UTC+3
                 readymes = (
                     f"У вас активирован доступ к ВПН до "
-                    f"<b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')}</b> ✅"
-                    f"ВНИМАНИЕ! НЕ ОТПИСЫВАЙСЯ ИЛИ ВСЕ ПО ПИЗДЕ ПОЙДЕТ"
+                    f"<b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')}</b> ✅\n\n"
+                    f"⚠️ ВНИМАНИЕ! НЕ ОТПИСЫВАЙСЯ ИЛИ ВСЁ ПОЙДЕТ ПО ПИЗДЕ!"
                 )
                 await bot.send_message(
                     m.chat.id,
@@ -909,53 +930,62 @@ async def Buy_month(call: types.CallbackQuery):
     await bot.answer_callback_query(call.id)
 
 
-async def AddTimeToUser(tgid, timetoadd):
-    global pool
+
+
+async def AddTimeToUser(tgid, timetoadd, pool):
+    MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+    UTC_TZ = pytz.utc
     userdat = await User.GetInfo(pool=pool, tgid=tgid)
+
     async with pool.acquire() as conn:
-        # Проверяем, истекла ли подписка
-        if userdat.subscription < datetime.now():
-            passdat = datetime.now() + timedelta(seconds=timetoadd)
-            await conn.execute(
-                """
-                UPDATE userss 
-                SET subscription = $1, banned = FALSE, notion_oneday = FALSE 
-                WHERE tgid = $2
-                """,
-                passdat, userdat.tgid
-            )
+        now_moscow = datetime.now(MOSCOW_TZ)  # Текущее время в UTC+3
+
+        # Приводим подписку пользователя к UTC+3 (если есть)
+        if userdat.subscription:
+            user_subscription = userdat.subscription.replace(tzinfo=UTC_TZ).astimezone(MOSCOW_TZ)
+        else:
+            user_subscription = now_moscow  # Если подписки нет, считаем ее истекшей
+
+        # Если подписка уже истекла, начинаем отсчет с текущего момента
+        if user_subscription < now_moscow:
+            new_subscription = now_moscow + timedelta(seconds=timetoadd)
+        else:
+            new_subscription = user_subscription + timedelta(seconds=timetoadd)
+
+        # Записываем новое время подписки в БД
+        await conn.execute(
+            """
+            UPDATE userss 
+            SET subscription = $1, banned = FALSE, notion_oneday = FALSE 
+            WHERE tgid = $2
+            """,
+            new_subscription, userdat.tgid
+        )
+
+        # Если подписка была истекшей, добавляем пользователя в VPN
+        if user_subscription < now_moscow:
             subprocess.call(f'./addusertovpn.sh {userdat.tgid}', shell=True)
 
-            # Отправляем сообщение пользователю
+            # Уведомляем пользователя
             await asyncio.to_thread(bot.send_message, userdat.tgid, e.emojize(
-                'Данные для входа были обновлены, скачайте новый файл авторизации через раздел "Как подключить :gear:"'
+                '✅ Данные для входа обновлены! Скачайте новый файл авторизации в разделе "Как подключить :gear:"'
             ))
-        else:
-            passdat = userdat.subscription + timedelta(seconds=timetoadd)
-            await conn.execute(
-                """
-                UPDATE userss 
-                SET subscription = $1, notion_oneday = FALSE 
-                WHERE tgid = $2
-                """,
-                passdat, userdat.tgid
-            )
 
+    # Формируем кнопки
     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    dateto = passdat.strftime('%d.%m.%Y %H:%M')
+    formatted_date = new_subscription.strftime('%d.%m.%Y %H:%M')
 
-    if passdat >= datetime.now():
+    if new_subscription >= now_moscow:
         Butt_main.add(
-            types.KeyboardButton(e.emojize(f":green_circle: До: {dateto} МСК :green_circle:"))
+            types.KeyboardButton(e.emojize(f"🟢 До: {formatted_date} МСК 🟢"))
         )
 
     Butt_main.add(
         types.KeyboardButton(e.emojize("Продлить :money_bag:")),
         types.KeyboardButton(e.emojize("Как подключить :gear:"))
-
     )
     Butt_main.add(
-        types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
+        types.KeyboardButton(e.emojize("Получить бесплатный ВПН"))
     )
 
 
@@ -1035,39 +1065,67 @@ bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
 
 async def checkTime():
+    MOSCOW_TZ = pytz.timezone("Europe/Moscow")
     while True:
         try:
-            time.sleep(1800)
+            await asyncio.sleep(1800)  # ✅ Правильный async sleep
+
             async with pool.acquire() as conn:
                 log = await conn.fetch("SELECT * FROM userss")
-            for user in log:
-                time_now = int(time.time())
-                remained_time = int(user[2]) - time_now
-                if remained_time <= 0 and user[3] == False:
-                    async with pool.acquire() as conn:
-                        await conn.execute("UPDATE userss SET banned = TRUE WHERE tgid = $1", user[1])
-                    subprocess.call(f'sudo ./deleteuserfromvpn.sh {str(user[1])}', shell=True)
 
-                    dateto = datetime.utcfromtimestamp(int(user[2]) + CONFIG['UTC_time'] * 3600).strftime(
-                        '%d.%m.%Y %H:%M')
+            time_now = int(datetime.now().timestamp())  # ✅ Получаем текущее время в UNIX-формате
+
+            for user in log:
+                tgid = user["tgid"]
+                sub_end_timestamp = user["subscription"]  # ✅ Подписка в формате UNIX timestamp
+                is_banned = user["banned"]
+                notion_oneday = user["notion_oneday"]
+
+                remained_time = sub_end_timestamp - time_now  # ✅ Время до конца подписки
+
+                # 🔴 Если подписка истекла и пользователь не заблокирован
+                if remained_time <= 0 and not is_banned:
+                    async with pool.acquire() as conn:
+                        await conn.execute("UPDATE userss SET banned = TRUE WHERE tgid = $1", tgid)
+
+                    subprocess.call(f'sudo ./deleteuserfromvpn.sh {tgid}', shell=True)
+
+                    # ✅ Преобразуем время подписки в UTC+3
+                    sub_end_moscow = datetime.utcfromtimestamp(sub_end_timestamp).replace(tzinfo=pytz.utc).astimezone(MOSCOW_TZ)
+                    formatted_date = sub_end_moscow.strftime('%d.%m.%Y %H:%M')
+
+                    # ✅ Клавиатура
                     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     Butt_main.add(
-                        types.KeyboardButton(e.emojize(f":red_circle: Закончилась: {dateto} МСК:red_circle:")))
-                    Butt_main.add(types.KeyboardButton(e.emojize(f"Продлить :money_bag:")),
-                                  types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
-                    Butt_main.add(
-                        types.KeyboardButton(e.emojize(f"Получить бесплатный ВПН"))
+                        types.KeyboardButton(e.emojize(f"🔴 Закончилась: {formatted_date} МСК 🔴"))
                     )
-                    BotChecking = TeleBot(BOTAPIKEY)
-                    BotChecking.send_message(user['tgid'],
-                                             texts_for_bot["ended_sub_message"],
-                                             reply_markup=Butt_main, parse_mode="HTML")
+                    Butt_main.add(
+                        types.KeyboardButton(e.emojize("Продлить 💰")),
+                        types.KeyboardButton(e.emojize("Как подключить ⚙️"))
+                    )
+                    Butt_main.add(
+                        types.KeyboardButton(e.emojize("Получить бесплатный ВПН"))
+                    )
 
-                if remained_time <= 86400 and user[4] == False:
+                    # ✅ Отправляем уведомление
+                    await bot.send_message(
+                        tgid, texts_for_bot["ended_sub_message"],
+                        reply_markup=Butt_main, parse_mode="HTML"
+                    )
+
+                # 🟡 Если осталось меньше 24 часов и уведомление еще не отправлялось
+                if remained_time <= 86400 and not notion_oneday:
                     async with pool.acquire() as conn:
-                        await conn.execute(f"UPDATE userss SET notion_oneday=true where tgid=?", (user[1],))
-                    BotChecking = TeleBot(BOTAPIKEY)
-                    BotChecking.send_message(user['tgid'], texts_for_bot["alert_to_renew_sub"], parse_mode="HTML")
+                        await conn.execute("UPDATE userss SET notion_oneday = TRUE WHERE tgid = $1", tgid)
+
+                    await bot.send_message(
+                        tgid, texts_for_bot["alert_to_renew_sub"],
+                        parse_mode="HTML"
+                    )
+
+        except Exception as ex:
+            print(f"Ошибка в checkTime: {ex}")
+            pass
 
                 # Дарим бесплатную подписку на 7 дней если он висит 3 дня как неактивный и не ливнул
                 # if remained_time <= 259200 and i['trial_continue'] == 0:
@@ -1089,68 +1147,76 @@ async def checkTime():
                 #                              e.emojize(texts_for_bot["alert_to_extend_sub"]),
                 #                              reply_markup=Butt_main, parse_mode="HTML")
 
-        except Exception as err:
-            print(err)
-            pass
+
 
 
 async def subscription_checker():
+    MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+
     global pool
     while True:
+        print("🔄 Начало проверки подписок...")
         await asyncio.sleep(3600)  # Проверка каждый час
 
         async with pool.acquire() as conn:
-            # Получаем всех активных пользователей
+            # Получаем всех активных пользователей с промо-флагом
             active_users = await conn.fetch(
-                "SELECT tgid FROM userss WHERE subscription > NOW() and promo_flag = TRUE"
+                "SELECT tgid, subscription FROM userss WHERE subscription > NOW() AND promo_flag = TRUE"
             )
 
             # Получаем список каналов для проверки
-            channels = await conn.fetch("SELECT * FROM channels")
+            channels = await conn.fetch("SELECT channel_id FROM channels")
+
+            print(f"📊 Найдено {len(active_users)} пользователей для проверки.")
+            print(f"📡 Проверяем подписку на {len(channels)} каналов.")
 
             for user in active_users:
                 try:
                     should_revoke = False
-                    user_id = user['tgid']
+                    user_id = user["tgid"]
+                    sub_end_time = user["subscription"].astimezone(MOSCOW_TZ)  # Переводим в UTC+3
+
+                    print(f"🔍 Проверяем пользователя {user_id} (подписка до {sub_end_time.strftime('%d.%m.%Y %H:%M')} МСК)")
 
                     # Проверяем подписки на все каналы
                     for channel in channels:
+                        channel_id = channel["channel_id"]
+                        print(f"  🔎 Проверяем подписку на канал {channel_id}...")
+
                         try:
-                            member = await bot.get_chat_member(
-                                chat_id=channel['channel_id'],
-                                user_id=user_id
-                            )
-                            if member.status not in ['member', 'administrator', 'creator']:
+                            member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+                            if member.status not in ["member", "administrator", "creator"]:
                                 should_revoke = True
+                                print(f"  ❌ Пользователь {user_id} не подписан на {channel_id}")
                                 break
                         except Exception as err:
-                            print(f"Ошибка проверки канала: {err}")
+                            print(f"  ⚠️ Ошибка проверки канала {channel_id} для {user_id}: {err}")
                             continue
 
                     # Если не подписан на какой-то канал
                     if should_revoke:
-                        now = datetime.now()
+                        now_moscow = datetime.now(pytz.utc).astimezone(MOSCOW_TZ)  # Время в UTC+3
+
                         await conn.execute(
-                            "UPDATE userss SET subscription = $1, promo_flag = false WHERE tgid = $2",
-                            now,
+                            "UPDATE userss SET promo_flag = FALSE WHERE tgid = $1",
                             user_id
                         )
 
-                        # Форматируем сообщение
+                        # Отправляем сообщение пользователю
                         mes = e.emojize(
                             "❌ *Доступ к VPN отозван!*\n"
                             "Причина: отписка от обязательных каналов\n\n"
                             "Чтобы восстановить доступ, подпишитесь на каналы и запустите проверку!"
                         )
 
-                        await bot.send_message(
-                            user_id,
-                            mes,
-                            parse_mode="Markdown"
-                        )
+                        await bot.send_message(user_id, mes, parse_mode="Markdown")
+
+                        print(f"🚫 Доступ пользователя {user_id} отозван из-за отписки от каналов!")
 
                 except Exception as err:
-                    print(f"Ошибка обработки пользователя {user_id}: {err}")
+                    print(f"🔥 Ошибка обработки пользователя {user_id}: {err}")
+
+        print("✅ Проверка подписок завершена.")
 
 
 if __name__ == '__main__':

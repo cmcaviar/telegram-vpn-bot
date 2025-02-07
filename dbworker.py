@@ -1,8 +1,6 @@
-import time
 import datetime
-import subprocess
+import pytz
 
-from asyncpg import Pool
 
 CONFIG = {}
 
@@ -66,9 +64,21 @@ class User:
 
     async def Adduser(self, pool, username, full_name):
         """Добавляет нового пользователя в базу данных."""
+        MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+
         if not self.registered:
             trial_days = int(CONFIG['trial_period'])
-            subscription_expires = datetime.datetime.now() + datetime.timedelta(days=trial_days)
+
+            # Устанавливаем дату окончания подписки в UTC+3
+            subscription_expires = datetime.datetime.now(pytz.utc).astimezone(MOSCOW_TZ) + datetime.timedelta(
+                days=trial_days)
+
+            # Преобразуем в offset-naive (без часового пояса) для PostgreSQL
+            subscription_expires = subscription_expires.replace(tzinfo=None)
+
+            print(f"🆕 Добавление пользователя {self.tgid}")
+            print(f"👤 Логин: {username}, Имя: {full_name}")
+            print(f"📅 Подписка до {subscription_expires.strftime('%d.%m.%Y %H:%M')} МСК")
 
             async with pool.acquire() as conn:
                 await conn.execute(
@@ -77,7 +87,9 @@ class User:
                     ON CONFLICT (tgid) DO NOTHING;""",
                     self.tgid, subscription_expires, username, full_name
                 )
-            subprocess.call(f'./addusertovpn.sh {str(self.tgid)}', shell=True)
+
+            print(f"✅ Пользователь {self.tgid} успешно добавлен в базу!")
+
             self.registered = True
 
     async def GetAllUsers(self, pool):
@@ -86,11 +98,12 @@ class User:
             return await conn.fetch("SELECT * FROM userss")
 
     async def GetAllUsersWithSub(self, pool):
+        MOSCOW_TZ = pytz.timezone("Europe/Moscow")
         """Получает пользователей с активной подпиской."""
         async with pool.acquire() as conn:
             return await conn.fetch(
                 "SELECT * FROM userss WHERE subscription > $1",
-                datetime.datetime.now()
+                datetime.datetime.now(pytz.utc).astimezone(MOSCOW_TZ)
             )
 
     async def GetAllUsersWithoutSub(self, pool):
@@ -99,20 +112,44 @@ class User:
             return await conn.fetch("SELECT * FROM userss WHERE banned = TRUE AND username <> '@None'")
 
 
-    async def grant_vpn_access(self, pool, tgid, days: int):
+    async def grant_vpn_access(self, pool, tgid: int, days: int):
+        MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+        """Выдает доступ к VPN на указанное количество дней."""
         self = User()
         self.tgid = tgid
+
+        now_moscow = datetime.datetime.now(pytz.utc).astimezone(MOSCOW_TZ)
+        sub_promo_end = (now_moscow + datetime.timedelta(days=days)).replace(tzinfo=None)
+
+        print(f"✅ Выдача VPN-доступа пользователю {tgid}")
+        print(f"📅 Доступ до: {sub_promo_end.strftime('%d.%m.%Y %H:%M')} МСК")
+
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE userss SET sub_promo_end = NOW() + INTERVAL '1 day' * $1 WHERE tgid = $2",
-                days, tgid
+                "UPDATE userss SET sub_promo_end = $1 WHERE tgid = $2",
+                sub_promo_end, tgid
             )
 
+        print(f"🎉 Пользователь {tgid} теперь имеет VPN-доступ до {sub_promo_end.strftime('%d.%m.%Y %H:%M')} МСК")
+
     async def revoke_vpn_access(self, pool, tgid: int):
+        MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+        """Отзывает доступ к VPN немедленно."""
         self = User()
         self.tgid = tgid
+
+        now_moscow = datetime.datetime.now(pytz.utc).astimezone(MOSCOW_TZ)
+
+        print(f"❌ Отзыв VPN-доступа у пользователя {tgid}")
+        print(f"⏳ Доступ прекращен в: {now_moscow.strftime('%d.%m.%Y %H:%M')} МСК")
+
         async with pool.acquire() as conn:
-            await conn.execute("UPDATE userss SET sub_promo_end = NOW() WHERE tgid = $1", tgid)
+            await conn.execute(
+                "UPDATE userss SET sub_promo_end = $1 WHERE tgid = $2",
+                now_moscow, tgid
+            )
+
+        print(f"🔒 Доступ у пользователя {tgid} успешно отозван!")
 
     async def get_subscription_channels(pool):
         async with pool.acquire() as conn:
@@ -140,15 +177,6 @@ class User:
     async def DeleteChannelByName(pool, name):
         async with pool.acquire() as conn:
             return await conn.execute("DELETE FROM channels WHERE name = $1", name)
-
-    async def get_user_subscription_end(self, pool, tgid: int) -> datetime:
-        self = User()
-        self.tgid = tgid
-        async with pool.acquire() as conn:
-            return await conn.fetch(
-            "SELECT sub_promo_end FROM userss WHERE tgid = $1",
-            tgid
-        )
 
     async def CheckNewNickname(self, pool, message):
         """Проверяет изменение никнейма и имени у пользователя."""
