@@ -19,7 +19,8 @@ steps = [
             banned BOOLEAN DEFAULT FALSE,
             notion_oneday BOOLEAN DEFAULT TRUE,
             username TEXT,
-            fullname TEXT
+            fullname TEXT,
+            checked_sub BOOLEAN DEFAULT TRUE
         );
         """,
         "DROP TABLE userss;"

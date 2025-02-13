@@ -9,7 +9,8 @@ class User:
         self.id = None
         self.tgid = None
         self.subscription = None
-        self.trial_subscription = True
+        self.sub_trial = None
+        self.checked_sub = None
         self.registered = False
         self.username = None
         self.fullname = None
@@ -26,6 +27,9 @@ class User:
             self.id = log["id"]
             self.subscription = log["subscription"]
             self.trial_subscription = log["banned"]
+            self.sub_trial = log["sub_trial"]
+            self.promo_flag = log["promo_flag"]
+            self.checked_sub = log["checked_sub"]
             self.registered = True
             self.username = log["username"]
             self.fullname = log["fullname"]
@@ -64,33 +68,21 @@ class User:
 
     async def Adduser(self, pool, username, full_name):
         """Добавляет нового пользователя в базу данных."""
-        MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
-        if not self.registered:
-            trial_days = int(CONFIG['trial_period'])
+        print(f"🆕 Добавление пользователя {self.tgid}")
+        print(f"👤 Логин: {username}, Имя: {full_name}")
 
-            # Устанавливаем дату окончания подписки в UTC+3
-            subscription_expires = datetime.datetime.now(pytz.utc).astimezone(MOSCOW_TZ) + datetime.timedelta(
-                days=trial_days)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO userss (tgid, username, fullname) 
+                VALUES ($1, $2, $3)
+                ON CONFLICT (tgid) DO NOTHING;""",
+                self.tgid, username, full_name
+            )
 
-            # Преобразуем в offset-naive (без часового пояса) для PostgreSQL
-            subscription_expires = subscription_expires.replace(tzinfo=None)
+        print(f"✅ Пользователь {self.tgid} успешно добавлен в базу!")
 
-            print(f"🆕 Добавление пользователя {self.tgid}")
-            print(f"👤 Логин: {username}, Имя: {full_name}")
-            print(f"📅 Подписка до {subscription_expires.strftime('%d.%m.%Y %H:%M')} МСК")
-
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    """INSERT INTO userss (tgid, subscription, username, fullname) 
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (tgid) DO NOTHING;""",
-                    self.tgid, subscription_expires, username, full_name
-                )
-
-            print(f"✅ Пользователь {self.tgid} успешно добавлен в базу!")
-
-            self.registered = True
+        self.registered = True
 
     async def GetAllUsers(self, pool):
         """Получает всех пользователей."""
@@ -115,22 +107,21 @@ class User:
     async def grant_vpn_access(self, pool, tgid: int, days: int):
         MOSCOW_TZ = pytz.timezone("Europe/Moscow")
         """Выдает доступ к VPN на указанное количество дней."""
-        self = User()
-        self.tgid = tgid
+        print(f"🆕 Добавление пользователя {self.tgid}")
 
         now_moscow = datetime.datetime.now(pytz.utc).astimezone(MOSCOW_TZ)
-        sub_promo_end = (now_moscow + datetime.timedelta(days=days)).replace(tzinfo=None)
+        sub_trial = (now_moscow + datetime.timedelta(days=days)).replace(tzinfo=None)
 
         print(f"✅ Выдача VPN-доступа пользователю {tgid}")
-        print(f"📅 Доступ до: {sub_promo_end.strftime('%d.%m.%Y %H:%M')} МСК")
+        print(f"📅 Доступ до: {sub_trial.strftime('%d.%m.%Y %H:%M')} МСК")
 
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE userss SET sub_promo_end = $1 WHERE tgid = $2",
-                sub_promo_end, tgid
+                "UPDATE userss SET sub_trial = $1 WHERE tgid = $2",
+                sub_trial, tgid
             )
 
-        print(f"🎉 Пользователь {tgid} теперь имеет VPN-доступ до {sub_promo_end.strftime('%d.%m.%Y %H:%M')} МСК")
+        print(f"🎉 Пользователь {tgid} теперь имеет trial-доступ до {sub_trial.strftime('%d.%m.%Y %H:%M')} МСК")
 
     async def revoke_vpn_access(self, pool, tgid: int):
         MOSCOW_TZ = pytz.timezone("Europe/Moscow")
@@ -145,7 +136,7 @@ class User:
 
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE userss SET sub_promo_end = $1 WHERE tgid = $2",
+                "UPDATE userss SET sub_trial = $1 WHERE tgid = $2",
                 now_moscow, tgid
             )
 
