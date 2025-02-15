@@ -16,7 +16,6 @@ from telebot import asyncio_filters
 from telebot.async_telebot import AsyncTeleBot
 import emoji as e
 import asyncio
-import threading
 from telebot import types
 from telebot.asyncio_storage import StateMemoryStorage
 from telebot.asyncio_handler_backends import State, StatesGroup
@@ -112,11 +111,9 @@ async def main():
     print("Пул соединений создан.")
     await run_migrations()
 
-    # Запускаем поток для checkTime
-    threadcheckTime = threading.Thread(target=checkTime, name="checkTime1")
-    threadcheckTime.start()
 
     asyncio.create_task(subscription_checker())
+    asyncio.create_task(checkTime())
     print("Subscription checker started")
 
     # Запускаем бота
@@ -839,8 +836,7 @@ async def Work_with_Message(m: types.Message):
             if sub_end_paid:
                 sub_end_paid = sub_end_paid.replace(tzinfo=MOSCOW_TZ)
 
-
-            if sub_end_paid and sub_end_paid > datetime.now(MOSCOW_TZ):  # Сравниваем корректно в UTC+3
+            if sub_end_paid and sub_end_paid > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):  # Сравниваем корректно в UTC+3
                 readymes = (
                     f"У вас активирован доступ к ВПН до "
                     f"<b>{sub_end_paid.strftime('%d.%m.%Y %H:%M')}</b> ✅\n\n"
@@ -910,10 +906,11 @@ async def check_subscription_handler(call: types.CallbackQuery):
         await bot.answer_callback_query(call.id, "Подпишитесь на все каналы!")
         await bot.send_message(chat_id, text)
     else:
+        now = datetime.now(pytz.utc).astimezone(MOSCOW_TZ).replace(tzinfo=None) + timedelta(days=3)
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE userss SET promo_flag = TRUE, checked_sub = FALSE, subscription = NOW() + INTERVAL '1 day' * $1 WHERE tgid = $2",
-                3, user_id
+                "UPDATE userss SET promo_flag = TRUE, checked_sub = FALSE, subscription = $1 WHERE tgid = $2",
+                now, user_id
             )
         subprocess.call(f'./addusertovpn.sh {user_id}', shell=True)
         await bot.send_message(chat_id, "✅ Доступ к VPN активирован на 3 дня!")
@@ -1081,47 +1078,66 @@ bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
 async def checkTime():
     MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+
     while True:
         try:
-            await asyncio.sleep(1800)  # ✅ Правильный async sleep
+            print("[INFO] Ожидание 1800 секунд перед следующей проверкой...")
+            await asyncio.sleep(10)  # ✅ Правильный async sleep
 
+            print("[INFO] Проверка истекших доступов...")
             async with pool.acquire() as conn:
                 log = await conn.fetch("SELECT * FROM userss")
+            print(f"[INFO] Получено {len(log)} пользователей из БД")
 
-            time_now = int(datetime.now().timestamp())  # ✅ Получаем текущее время в UNIX-формате
+            time_now = int(datetime.now(MOSCOW_TZ).timestamp())  # Текущее время в UTC+3
+            print(f"[DEBUG] Текущее время (UTC+3): {time_now}")
 
             for user in log:
                 tgid = user["tgid"]
-                sub_end_timestamp = user["subscription"]  # ✅ Подписка в формате UNIX timestamp
-                trial_end_timestamp = user["sub_trial"]
+                sub_end_paid = user["subscription"]  # Может быть `None`
+                sub_trial = user["sub_trial"]  # Может быть `None`
                 is_banned = user["banned"]
                 notion_oneday = user["notion_oneday"]
 
-                latest_sub_end = max(filter(None, [trial_end_timestamp, sub_end_timestamp]), default=None)
-                remained_time = latest_sub_end - time_now  # ✅ Время до конца подписки
+                # Преобразуем timestamp в datetime
+                if sub_trial:
+                    sub_trial = sub_trial.replace(tzinfo=pytz.utc).astimezone(MOSCOW_TZ)
+                if sub_end_paid:
+                    sub_end_paid = sub_end_paid.replace(tzinfo=pytz.utc).astimezone(MOSCOW_TZ)
+
+                # Определяем, какая дата позже
+                latest_sub_end = int(max(filter(None, [sub_trial, sub_end_paid]), default=None).timestamp())
+
+                # Вычисляем оставшееся время в секундах
+                remained_time = (latest_sub_end - time_now) if latest_sub_end else None
 
                 # 🔴 Если подписка истекла и пользователь не заблокирован
-                if remained_time <= 0 and not is_banned:
+                if remained_time is not None and remained_time <= 0 and not is_banned:
+                    print(f"[WARNING] Подписка истекла у {tgid}, блокируем...")
                     async with pool.acquire() as conn:
                         await conn.execute("UPDATE userss SET banned = TRUE WHERE tgid = $1", tgid)
 
+                    print(f"[INFO] Выполняем скрипт: sudo ./deleteuserfromvpn.sh {tgid}")
                     subprocess.call(f'sudo ./deleteuserfromvpn.sh {tgid}', shell=True)
 
                     # ✅ Преобразуем время подписки в UTC+3
-                    sub_end_moscow = datetime.utcfromtimestamp(sub_end_timestamp).replace(tzinfo=MOSCOW_TZ)
+                    sub_end_moscow = datetime.utcfromtimestamp(latest_sub_end).replace(tzinfo=MOSCOW_TZ).astimezone(
+                        MOSCOW_TZ)
                     formatted_date = sub_end_moscow.strftime('%d.%m.%Y %H:%M')
+
+                    print(f"[INFO] Отправляем уведомление о блокировке {tgid}: подписка истекла {formatted_date}")
 
                     # ✅ Клавиатура
                     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     Butt_main.add(
-                        types.KeyboardButton(e.emojize(f"🔴 Закончилась: {formatted_date} МСК 🔴"))
+                        types.KeyboardButton(f"🔴 Закончилась: {formatted_date} МСК 🔴")
                     )
                     Butt_main.add(
-                        types.KeyboardButton(e.emojize("Приобрести доступ :money_bag:")),
-                        types.KeyboardButton(e.emojize("Как подключить ⚙️"))
+                        types.KeyboardButton("Приобрести доступ 💰"),
+                        types.KeyboardButton("Как подключить ⚙️")
                     )
                     Butt_main.add(
-                        types.KeyboardButton(e.emojize(f":gift: Хочу бесплатный VPN! :gift:", language='alias'))
+                        types.KeyboardButton("🎁 Хочу бесплатный VPN! 🎁")
                     )
 
                     # ✅ Отправляем уведомление
@@ -1131,7 +1147,8 @@ async def checkTime():
                     )
 
                 # 🟡 Если осталось меньше 24 часов и уведомление еще не отправлялось
-                if remained_time <= 86400 and not notion_oneday:
+                if remained_time is not None and remained_time <= 86400 and not notion_oneday:
+                    print(f"[INFO] Уведомляем {tgid} о скором окончании подписки (осталось {remained_time} сек)")
                     async with pool.acquire() as conn:
                         await conn.execute("UPDATE userss SET notion_oneday = TRUE WHERE tgid = $1", tgid)
 
@@ -1141,7 +1158,7 @@ async def checkTime():
                     )
 
         except Exception as ex:
-            print(f"Ошибка в checkTime: {ex}")
+            print(f"[ERROR] Ошибка в checkTime: {ex}")
             pass
 
                 # Дарим бесплатную подписку на 7 дней если он висит 3 дня как неактивный и не ливнул
@@ -1173,7 +1190,7 @@ async def subscription_checker():
     global pool
     while True:
         print("🔄 Начало проверки подписок...")
-        await asyncio.sleep(3600)  # Проверка каждый час
+        await asyncio.sleep(3600 * 4)  # Проверка каждые 4 часа
 
         async with pool.acquire() as conn:
             # Получаем всех активных пользователей с промо-флагом
@@ -1182,10 +1199,11 @@ async def subscription_checker():
             )
 
             # Получаем список каналов для проверки
-            channels = await conn.fetch("SELECT channel_id FROM channels")
+            channels = await conn.fetch("SELECT channel_id, name FROM channels")
 
             print(f"📊 Найдено {len(active_users)} пользователей для проверки.")
             print(f"📡 Проверяем подписку на {len(channels)} каналов.")
+            now = datetime.now(pytz.utc).astimezone(MOSCOW_TZ).replace(tzinfo=None)
 
             for user in active_users:
                 try:
@@ -1197,25 +1215,26 @@ async def subscription_checker():
 
                     # Проверяем подписки на все каналы
                     for channel in channels:
+                        channel_name = channel["name"]
                         channel_id = channel["channel_id"]
-                        print(f"  🔎 Проверяем подписку на канал {channel_id}...")
+                        print(f"  🔎 Проверяем подписку на канал {channel_name}...")
 
                         try:
                             member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
                             if member.status not in ["member", "administrator", "creator"]:
                                 should_revoke = True
-                                print(f"  ❌ Пользователь {user_id} не подписан на {channel_id}")
+                                print(f"  ❌ Пользователь {user_id} не подписан на {channel_name}")
                                 break
                         except Exception as err:
-                            print(f"  ⚠️ Ошибка проверки канала {channel_id} для {user_id}: {err}")
+                            print(f"  ⚠️ Ошибка проверки канала {channel_name} для {user_id}: {err}")
                             continue
 
                     # Если не подписан на какой-то канал
                     if should_revoke:
 
                         await conn.execute(
-                            "UPDATE userss SET promo_flag = FALSE, checked_sub = TRUE WHERE tgid = $1",
-                            user_id
+                            "UPDATE userss SET promo_flag = FALSE,subscription = $1, checked_sub = TRUE WHERE tgid = $2",
+                            now, user_id
                         )
                         subprocess.call(f'sudo ./deleteuserfromvpn.sh {user_id}', shell=True)
 
