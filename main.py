@@ -333,13 +333,16 @@ async def Work_with_Message(m: types.Message):
 
     readymes = f"Пользователь: <b>{str(user_dat.fullname)}</b> ({str(user_dat.username)})\nTG-id: <code>{str(user_dat.tgid)}</code>\n\n"
 
-    if user_dat.subscription and user_dat.subscription.replace(tzinfo=timezone.utc) > datetime.now(pytz.utc).astimezone(MOSCOW_TZ):
+    sub_trial = user_dat.sub_trial
+    sub_end_paid = user_dat.subscription
+
+    # Определяем, какая дата позже
+    latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
+
+    if latest_sub_end and latest_sub_end.replace(tzinfo=MOSCOW_TZ) > datetime.now(MOSCOW_TZ).astimezone(MOSCOW_TZ):
         readymes += f"Подписка: до <b>{user_dat.subscription.strftime('%d.%m.%Y %H:%M')}</b> ✅"
     else:
-        if user_dat.sub_trial and user_dat.sub_trial.replace(tzinfo=timezone.utc) > datetime.now(pytz.utc).astimezone(MOSCOW_TZ):
-            readymes += f"Подписка: до <b>{user_dat.sub_trial.strftime('%d.%m.%Y %H:%M')}</b> ✅"
-        else:
-            readymes += f"Подписка: закончилась ❌"
+        readymes += f"Подписка: закончилась <b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')}</b>❌"
 
 
     await bot.set_state(m.from_user.id, MyStates.editUser)
@@ -573,11 +576,6 @@ async def Work_with_Message(m: types.Message):
                 sub_trial = user.get('sub_trial')
                 sub_end_paid = user.get('subscription')
 
-                # if sub_trial:
-                #     sub_trial = sub_trial.replace(tzinfo=pytz.utc).astimezone(UTC_PLUS_3)
-                # if sub_end_paid:
-                #     sub_end_paid = sub_end_paid.replace(tzinfo=pytz.utc).astimezone(UTC_PLUS_3)
-
                 # Определяем, какая дата позже
                 latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
 
@@ -631,22 +629,12 @@ async def Work_with_Message(m: types.Message):
                         )
                     subprocess.call(f'./addusertovpn.sh {user["tgid"]}', shell=True)
 
-                    # Создаем клавиатуру
-                    Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                    Butt_main.add(
-                        types.KeyboardButton(e.emojize("Приобрести доступ :money_bag:")),
-                        types.KeyboardButton(e.emojize("Как подключить :gear:"))
-                    )
-                    Butt_main.add(
-                        types.KeyboardButton(e.emojize(f":gift: Хочу бесплатный VPN! :gift:", language='alias'))
-                    )
-
                     # Отправляем сообщение пользователю через `asyncio.create_task`, чтобы не блокировать цикл
                     asyncio.create_task(
                         bot.send_message(
                             user["tgid"],
                             texts_for_bot["alert_to_extend_sub"],
-                            reply_markup=Butt_main,
+                            reply_markup=await main_buttons(user_dat),
                             parse_mode="HTML"
                         )
                     )
@@ -672,15 +660,9 @@ async def Work_with_Message(m: types.Message):
                 try:
                     countSended += 1
 
-                    Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                    Butt_main.add(types.KeyboardButton(e.emojize(f"Приобрести доступ :money_bag:")),
-                                  types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
-                    Butt_main.add(
-                        types.KeyboardButton(e.emojize(f":gift: Хочу бесплатный VPN! :gift:", language='alias'))
-                    )
                     BotChecking.send_message(user['tgid'],
                                              texts_for_bot["alert_to_update"],
-                                             reply_markup=Butt_main, parse_mode="HTML")
+                                             reply_markup=await main_buttons(user_dat), parse_mode="HTML")
                 except:
                     countSended -= 1
                     countBlocked += 1
@@ -700,22 +682,20 @@ async def Work_with_Message(m: types.Message):
                 return
             for user in allusers:
                 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
-                sub_trial = user.get('sub_trial')
-                sub_end_paid = user.get('subscription')
 
                 # Приводим даты к часовому поясу UTC+3
-                if sub_trial:
-                    sub_trial = sub_trial.replace(tzinfo=pytz.utc).astimezone(MOSCOW_TZ)
-                if sub_end_paid:
-                    sub_end_paid = sub_end_paid.replace(tzinfo=pytz.utc).astimezone(MOSCOW_TZ)
+                sub_trial = user.get('sub_trial')
+                sub_end_paid = user.get('subscription')
 
                 # Определяем, какая дата позже
                 latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
 
-                if latest_sub_end and latest_sub_end > datetime.now(MOSCOW_TZ):  # Сравниваем в одном часовом поясе
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) - {latest_sub_end.strftime('%d.%m.%Y %H:%M')}\n\n"
+                now_utc3 = datetime.now(pytz.utc).astimezone(MOSCOW_TZ).replace(tzinfo=None)  # Текущее время в UTC+3
+
+                if latest_sub_end and latest_sub_end > now_utc3:
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ✅ до {latest_sub_end.strftime('%d.%m.%Y %H:%M')}\n"
                 else:
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ Закончилась {latest_sub_end.strftime('%d.%m.%Y %H:%M') if latest_sub_end else 'неизвестно'}\n\n"
+                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ закончилась {latest_sub_end.strftime('%d.%m.%Y %H:%M') if latest_sub_end else '—'}\n"
 
                 if len(readymes) + len(user_info) > 4090:
                     readymass.append(readymes)
@@ -818,25 +798,39 @@ async def Work_with_Message(m: types.Message):
         else:
             await bot.send_message(chat_id=m.chat.id, text="Сначала нужно купить подписку!")
 
+    if e.demojize(m.text, language='alias') == ":small_blue_diamond: :calendar: Информация о подписке :calendar: :small_blue_diamond:":
+        sub_trial = user_dat.sub_trial
+        sub_end_paid = user_dat.subscription
+
+        # Приводим даты к часовому поясу UTC+3
+        if sub_trial:
+            sub_trial = sub_trial.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
+        if sub_end_paid:
+            sub_end_paid = sub_end_paid.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
+
+        # Определяем, какая дата позже
+        latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
+
+        if latest_sub_end:
+            if latest_sub_end > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):
+                message = f"✅ Подписка активна до <b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')} МСК</b>"
+            else:
+                message = f"❌ Подписка закончилась <b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')} МСК</b>"
+        else:
+            message = "Нет активных подписок"
+
+        await bot.send_message(m.chat.id, message, parse_mode="HTML")
+
     if e.demojize(m.text, language='alias') == ":gift: Хочу бесплатный VPN! :gift:":
-        async with pool.acquire() as conn:
-
-            # Получаем данные о подписке
-            user_dat = await conn.fetchrow(
-                "SELECT sub_trial, subscription FROM userss WHERE tgid = $1",
-                user_dat.tgid
-            )
-
-        # Проверяем активную подписку
-
         if user_dat:
-            sub_end_paid = user_dat.get('subscription')
+            sub_end_paid = user_dat.subscription
+            promo_flag = user_dat.promo_flag
 
             # Приводим к UTC+3, если дата существует
             if sub_end_paid:
                 sub_end_paid = sub_end_paid.replace(tzinfo=MOSCOW_TZ)
 
-            if sub_end_paid and sub_end_paid > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):  # Сравниваем корректно в UTC+3
+            if sub_end_paid and promo_flag and sub_end_paid > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):  # Сравниваем корректно в UTC+3
                 readymes = (
                     f"У вас активирован доступ к ВПН до "
                     f"<b>{sub_end_paid.strftime('%d.%m.%Y %H:%M')}</b> ✅\n\n"
@@ -987,11 +981,6 @@ async def AddTimeToUser(tgid, timetoadd):
     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
     formatted_date = new_subscription.strftime('%d.%m.%Y %H:%M')
 
-    if new_subscription.replace(tzinfo=MOSCOW_TZ) >= now_moscow:
-        Butt_main.add(
-            types.KeyboardButton(e.emojize(f"🟢 До: {formatted_date} МСК 🟢"))
-        )
-
     Butt_main.add(
         types.KeyboardButton(e.emojize("Приобрести доступ :money_bag:")),
         types.KeyboardButton(e.emojize("Как подключить :gear:"))
@@ -1082,7 +1071,7 @@ async def checkTime():
     while True:
         try:
             print("[INFO] Ожидание 1800 секунд перед следующей проверкой...")
-            await asyncio.sleep(10)  # ✅ Правильный async sleep
+            await asyncio.sleep(1800)  # ✅ Правильный async sleep
 
             print("[INFO] Проверка истекших доступов...")
             async with pool.acquire() as conn:
@@ -1106,7 +1095,9 @@ async def checkTime():
                     sub_end_paid = sub_end_paid.replace(tzinfo=pytz.utc).astimezone(MOSCOW_TZ)
 
                 # Определяем, какая дата позже
-                latest_sub_end = int(max(filter(None, [sub_trial, sub_end_paid]), default=None).timestamp())
+                latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=0)
+                if latest_sub_end:
+                    latest_sub_end = int(latest_sub_end.timestamp())
 
                 # Вычисляем оставшееся время в секундах
                 remained_time = (latest_sub_end - time_now) if latest_sub_end else None
@@ -1127,23 +1118,10 @@ async def checkTime():
 
                     print(f"[INFO] Отправляем уведомление о блокировке {tgid}: подписка истекла {formatted_date}")
 
-                    # ✅ Клавиатура
-                    Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                    Butt_main.add(
-                        types.KeyboardButton(f"🔴 Закончилась: {formatted_date} МСК 🔴")
-                    )
-                    Butt_main.add(
-                        types.KeyboardButton("Приобрести доступ 💰"),
-                        types.KeyboardButton("Как подключить ⚙️")
-                    )
-                    Butt_main.add(
-                        types.KeyboardButton("🎁 Хочу бесплатный VPN! 🎁")
-                    )
-
                     # ✅ Отправляем уведомление
                     await bot.send_message(
                         tgid, texts_for_bot["ended_sub_message"],
-                        reply_markup=Butt_main, parse_mode="HTML"
+                        reply_markup=await main_buttons(user), parse_mode="HTML"
                     )
 
                 # 🟡 Если осталось меньше 24 часов и уведомление еще не отправлялось
@@ -1160,27 +1138,6 @@ async def checkTime():
         except Exception as ex:
             print(f"[ERROR] Ошибка в checkTime: {ex}")
             pass
-
-                # Дарим бесплатную подписку на 7 дней если он висит 3 дня как неактивный и не ливнул
-                # if remained_time <= 259200 and i['trial_continue'] == 0:
-                #     BotChecking = TeleBot(BOTAPIKEY)
-                #     timetoadd = 7 * 60 * 60 * 24
-                #     db = sqlite3.connect(DBCONNECT)
-                #     db.execute(f"UPDATE userss SET trial_continue=1 where tgid=?", (i[1],))
-                #     db.execute(
-                #         f"Update userss set subscription = ?, banned=false, notion_oneday=false where tgid=?",
-                #         (str(int(time.time()) + timetoadd), i[1]))
-                #     db.commit()
-                #     db.close()
-                #     subprocess.call(f'./addusertovpn.sh {str(i[1])}', shell=True)
-
-                #     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
-                #     Butt_main.add(types.KeyboardButton(e.emojize(f"Приобрести доступ :money_bag:")),
-                #                   types.KeyboardButton(e.emojize(f"Как подключить :gear:")))
-                #     BotChecking.send_message(i['tgid'],
-                #                              e.emojize(texts_for_bot["alert_to_extend_sub"]),
-                #                              reply_markup=Butt_main, parse_mode="HTML")
-
 
 
 

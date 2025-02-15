@@ -12,29 +12,20 @@ UTC_PLUS_3 = pytz.timezone('Europe/Moscow')  # Москва в UTC+3
 async def main_buttons(user: User):
     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    if user.subscription is not None or user.sub_trial is not None:
-        # Преобразуем subscription в datetime, если он не None
-        sub_time = max(filter(None, [user.subscription, user.sub_trial]), default=None) # subscription теперь уже datetime (TIMESTAMP в БД)
-        timenow = datetime.now()
 
-        dateto = sub_time.strftime('%d.%m.%Y %H:%M')
+    if CONFIG["admin_tg_id"] == user.tgid:
+        Butt_main.add(types.KeyboardButton(e.emojize(f"Админ-панель :smiling_face_with_sunglasses:")))
 
-        if sub_time < timenow:
-            Butt_main.add(types.KeyboardButton(e.emojize(f":red_circle: Закончилась: {dateto} МСК:red_circle:")))
-        else:
-            Butt_main.add(types.KeyboardButton(e.emojize(f":green_circle: До: {dateto} МСК:green_circle:")))
-
-        if CONFIG["admin_tg_id"] == user.tgid:
-            Butt_main.add(types.KeyboardButton(e.emojize(f"Админ-панель :smiling_face_with_sunglasses:")))
-
-        Butt_main.add(
-            types.KeyboardButton(e.emojize(f"Приобрести доступ :money_bag:")),
-            types.KeyboardButton(e.emojize(f"Как подключить :gear:"))
-        )
-        Butt_main.add(
-            types.KeyboardButton(e.emojize(f":gift: Хочу бесплатный VPN! :gift:", language='alias'))
-        )
-
+    Butt_main.add(
+        types.KeyboardButton(e.emojize(f":small_blue_diamond: :calendar: Информация о подписке :calendar: :small_blue_diamond:", language='alias'))
+    )
+    Butt_main.add(
+        types.KeyboardButton(e.emojize(f"Приобрести доступ :money_bag:")),
+        types.KeyboardButton(e.emojize(f"Как подключить :gear:"))
+    )
+    Butt_main.add(
+        types.KeyboardButton(e.emojize(f":gift: Хочу бесплатный VPN! :gift:", language='alias'))
+    )
 
     return Butt_main
 

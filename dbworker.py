@@ -91,11 +91,11 @@ class User:
 
     async def GetAllUsersWithSub(self, pool):
         MOSCOW_TZ = pytz.timezone("Europe/Moscow")
-        """Получает пользователей с активной подпиской."""
+        now_moscow = datetime.datetime.now(pytz.utc).astimezone(MOSCOW_TZ).replace(tzinfo=None)
         async with pool.acquire() as conn:
             return await conn.fetch(
                 "SELECT * FROM userss WHERE subscription > $1",
-                datetime.datetime.now(pytz.utc).astimezone(MOSCOW_TZ)
+                now_moscow  # ✅ Теперь формат полностью соответствует БД
             )
 
     async def GetAllUsersWithoutSub(self, pool):
