@@ -21,6 +21,7 @@ from telebot.asyncio_storage import StateMemoryStorage
 from telebot.asyncio_handler_backends import State, StatesGroup
 from yoyo import get_backend, read_migrations
 
+from logger import logger
 from buttons import main_buttons
 from dbworker import User
 
@@ -70,15 +71,15 @@ def start_postgres_container():
     # Проверяем, запущен ли контейнер
     containers = client.containers.list(filters={"name": "my_postgres"})
     if containers:
-        print("PostgreSQL контейнер уже запущен.")
+        logger.info("PostgreSQL контейнер уже запущен.")
         return
 
     # Запускаем контейнер с помощью docker-compose
-    print("Запуск PostgreSQL контейнера...")
+    logger.info("Запуск PostgreSQL контейнера...")
     subprocess.run(["docker-compose", "up", "-d"], check=True)
 
     # Ждем, пока PostgreSQL станет доступным
-    print("Ожидание готовности PostgreSQL...")
+    logger.info("Ожидание готовности PostgreSQL...")
     time.sleep(5)  # Можно заменить на более сложную проверку
 
 
@@ -102,7 +103,7 @@ async def run_migrations():
     with backend.lock():
         backend.apply_migrations(backend.to_apply(migrations))
 
-    print("Все миграции успешно применены")
+    logger.info("Все миграции успешно применены")
 
 
 async def main():
@@ -111,13 +112,13 @@ async def main():
     global pool
     # Создаем пул соединений
     pool = await create_db_pool()
-    print("Пул соединений создан.")
+    logger.info("Пул соединений создан.")
     await run_migrations()
 
 
     asyncio.create_task(subscription_checker())
     asyncio.create_task(checkTime())
-    print("Subscription checker started")
+    logger.info("Subscription checker started")
 
     # Запускаем бота
     await bot.polling(non_stop=True, interval=0, request_timeout=60, timeout=60)
@@ -512,7 +513,7 @@ async def process_notification_decision(m: types.Message):
                 await bot.send_message(user["tgid"], notification_text)
                 sent_count += 1
             except Exception as e:
-                print(f"Ошибка отправки {user['tgid']}: {e}")
+                logger.info(f"Ошибка отправки {user['tgid']}: {e}")
 
         await bot.send_message(m.from_user.id, f"✅ Сообщение успешно отправлено {sent_count} пользователям.",
                                reply_markup=await buttons.admin_buttons())
@@ -776,12 +777,12 @@ async def Work_with_Message(m: types.Message):
             sub_trial = sub_trial.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
         if sub_end_paid:
             sub_end_paid = sub_end_paid.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
-        print("1")
+        logger.info("1")
         # Определяем, какая дата позже
         latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
         if latest_sub_end and latest_sub_end > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):
             Butt_how_to = types.InlineKeyboardMarkup()
-            print("2")
+            logger.info("2")
             Butt_how_to.add(
                 types.InlineKeyboardButton(e.emojize("Подробнее как подключить"),
                                            url="https://telegra.ph/Gajd-na-ustanovku-11-27"))
@@ -1074,16 +1075,16 @@ async def checkTime():
 
     while True:
         try:
-            print("[INFO] Ожидание час перед следующей проверкой...")
+            logger.info("[INFO] Ожидание час перед следующей проверкой...")
             await asyncio.sleep(3600)  # ✅ Правильный async sleep
 
-            print("[INFO] Проверка истекших доступов...")
+            logger.info("[INFO] Проверка истекших доступов...")
             async with pool.acquire() as conn:
                 log = await conn.fetch("SELECT * FROM userss")
-            print(f"[INFO] Получено {len(log)} пользователей из БД")
+            logger.info(f"[INFO] Получено {len(log)} пользователей из БД")
 
             time_now = int(datetime.now(MOSCOW_TZ).timestamp())  # Текущее время в UTC+3
-            print(f"[DEBUG] Текущее время (UTC+3): {time_now}")
+            logger.info(f"[DEBUG] Текущее время (UTC+3): {time_now}")
 
             for user in log:
                 tgid = user["tgid"]
@@ -1108,11 +1109,11 @@ async def checkTime():
 
                 # 🔴 Если подписка истекла и пользователь не заблокирован
                 if remained_time is not None and remained_time <= 0 and not is_banned:
-                    print(f"[WARNING] Подписка истекла у {tgid}, блокируем...")
+                    logger.info(f"[WARNING] Подписка истекла у {tgid}, блокируем...")
                     async with pool.acquire() as conn:
                         await conn.execute("UPDATE userss SET banned = TRUE WHERE tgid = $1", tgid)
 
-                    print(f"[INFO] Выполняем скрипт: sudo ./deleteuserfromvpn.sh {tgid}")
+                    logger.info(f"[INFO] Выполняем скрипт: sudo ./deleteuserfromvpn.sh {tgid}")
                     subprocess.call(f'sudo ./deleteuserfromvpn.sh {tgid}', shell=True)
 
                     # ✅ Преобразуем время подписки в UTC+3
@@ -1120,7 +1121,7 @@ async def checkTime():
                         MOSCOW_TZ)
                     formatted_date = sub_end_moscow.strftime('%d.%m.%Y %H:%M')
 
-                    print(f"[INFO] Отправляем уведомление о блокировке {tgid}: подписка истекла {formatted_date}")
+                    logger.info(f"[INFO] Отправляем уведомление о блокировке {tgid}: подписка истекла {formatted_date}")
 
                     # ✅ Отправляем уведомление
                     await bot.send_message(
@@ -1130,7 +1131,7 @@ async def checkTime():
 
                 # 🟡 Если осталось меньше 24 часов и уведомление еще не отправлялось
                 if remained_time is not None and remained_time <= 86400 and not notion_oneday:
-                    print(f"[INFO] Уведомляем {tgid} о скором окончании подписки (осталось {remained_time} сек)")
+                    logger.info(f"[INFO] Уведомляем {tgid} о скором окончании подписки (осталось {remained_time} сек)")
                     async with pool.acquire() as conn:
                         await conn.execute("UPDATE userss SET notion_oneday = TRUE WHERE tgid = $1", tgid)
 
@@ -1140,7 +1141,7 @@ async def checkTime():
                     )
 
         except Exception as ex:
-            print(f"[ERROR] Ошибка в checkTime: {ex}")
+            logger.info(f"[ERROR] Ошибка в checkTime: {ex}")
             pass
 
 
@@ -1150,7 +1151,7 @@ async def subscription_checker():
 
     global pool
     while True:
-        print("🔄 Начало проверки подписок...")
+        logger.info("🔄 Начало проверки подписок...")
         await asyncio.sleep(3600 * 4)  # Проверка каждые 4 часа
 
         async with pool.acquire() as conn:
@@ -1162,8 +1163,8 @@ async def subscription_checker():
             # Получаем список каналов для проверки
             channels = await conn.fetch("SELECT channel_id, name FROM channels")
 
-            print(f"📊 Найдено {len(active_users)} пользователей для проверки.")
-            print(f"📡 Проверяем подписку на {len(channels)} каналов.")
+            logger.info(f"📊 Найдено {len(active_users)} пользователей для проверки.")
+            logger.info(f"📡 Проверяем подписку на {len(channels)} каналов.")
             now = datetime.now(pytz.utc).astimezone(MOSCOW_TZ).replace(tzinfo=None)
 
             for user in active_users:
@@ -1172,22 +1173,22 @@ async def subscription_checker():
                     user_id = user["tgid"]
                     sub_end_time = user["subscription"].astimezone(MOSCOW_TZ)  # Переводим в UTC+3
 
-                    print(f"🔍 Проверяем пользователя {user_id} (подписка до {sub_end_time.strftime('%d.%m.%Y %H:%M')} МСК)")
+                    logger.info(f"🔍 Проверяем пользователя {user_id} (подписка до {sub_end_time.strftime('%d.%m.%Y %H:%M')} МСК)")
 
                     # Проверяем подписки на все каналы
                     for channel in channels:
                         channel_name = channel["name"]
                         channel_id = channel["channel_id"]
-                        print(f"  🔎 Проверяем подписку на канал {channel_name}...")
+                        logger.info(f"  🔎 Проверяем подписку на канал {channel_name}...")
 
                         try:
                             member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
                             if member.status not in ["member", "administrator", "creator"]:
                                 should_revoke = True
-                                print(f"  ❌ Пользователь {user_id} не подписан на {channel_name}")
+                                logger.info(f"  ❌ Пользователь {user_id} не подписан на {channel_name}")
                                 break
                         except Exception as err:
-                            print(f"  ⚠️ Ошибка проверки канала {channel_name} для {user_id}: {err}")
+                            logger.info(f"  ⚠️ Ошибка проверки канала {channel_name} для {user_id}: {err}")
                             continue
 
                     # Если не подписан на какой-то канал
@@ -1208,12 +1209,12 @@ async def subscription_checker():
 
                         await bot.send_message(user_id, mes, parse_mode="Markdown")
 
-                        print(f"🚫 Доступ пользователя {user_id} отозван из-за отписки от каналов!")
+                        logger.info(f"🚫 Доступ пользователя {user_id} отозван из-за отписки от каналов!")
 
                 except Exception as err:
-                    print(f"🔥 Ошибка обработки пользователя {user_id}: {err}")
+                    logger.info(f"🔥 Ошибка обработки пользователя {user_id}: {err}")
 
-        print("✅ Проверка подписок завершена.")
+        logger.info("✅ Проверка подписок завершена.")
 
 async def showUsers(user_dat, allusers, m: types.Message):
     readymass = []
