@@ -2,7 +2,7 @@ import json
 import string
 import subprocess
 import pytz
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import time
 
 import asyncpg
@@ -48,6 +48,9 @@ class MyStates(StatesGroup):
     UserAddTimeHours = State()
     UserAddTimeMinutes = State()
     UserAddTimeApprove = State()
+
+    waiting_for_message = State()
+    confirm_send = State()
 
     AdminNewUser = State()
 
@@ -474,6 +477,50 @@ async def delete_channels(m: types.Message):
                                    reply_markup=types.ReplyKeyboardRemove())
         return
 
+@bot.message_handler(state=MyStates.waiting_for_message, content_types=["text"])
+async def confirm_notification(m: types.Message):
+    async with bot.retrieve_data(m.from_user.id) as data:
+        data['notification_text'] = m.text
+
+    confirm_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    confirm_markup.add(types.KeyboardButton("✅ Подтвердить"))
+    confirm_markup.add(types.KeyboardButton("❌ Отмена"))
+
+    await bot.set_state(m.from_user.id, MyStates.confirm_send)
+    await bot.send_message(m.from_user.id,
+                           f"Вы уверены, что хотите отправить это сообщение?\n\n"
+                           f"<b>{m.text}</b>",
+                           parse_mode="HTML",
+                           reply_markup=confirm_markup)
+
+@bot.message_handler(state=MyStates.confirm_send, content_types=["text"])
+async def process_notification_decision(m: types.Message):
+    global pool
+    if m.text == "✅ Подтвердить":
+        async with bot.retrieve_data(m.from_user.id) as data:
+            notification_text = data['notification_text']
+
+        # Получаем список пользователей из базы
+        async with pool.acquire() as conn:
+            users = await conn.fetch("SELECT tgid FROM userss WHERE banned = FALSE")
+
+        sent_count = 0
+        for user in users:
+            try:
+                await bot.send_message(user["tgid"], notification_text)
+                sent_count += 1
+            except Exception as e:
+                print(f"Ошибка отправки {user['tgid']}: {e}")
+
+        await bot.send_message(m.from_user.id, f"✅ Сообщение успешно отправлено {sent_count} пользователям.",
+                               reply_markup=await buttons.admin_buttons())
+
+    else:
+        await bot.send_message(m.from_user.id, "❌ Рассылка отменена.",
+                               reply_markup=await buttons.admin_buttons())
+
+    await bot.delete_state(m.from_user.id)
+    return
 
 @bot.message_handler(state=MyStates.DeleteChannelByName, content_types=["text"])
 async def Work_with_Message(m: types.Message):
@@ -562,7 +609,64 @@ async def Work_with_Message(m: types.Message):
             )
             await bot.send_message(m.from_user.id, "Хотите удалить каналы?", reply_markup=Butt_main)
             return
+        if e.demojize(m.text) == "Отчет по подпискам":
+            async with pool.acquire() as conn:
+                # Получаем данные о подписках
+                records = await conn.fetch("""
+                    SELECT 
+                        c.name AS channel_name,
+                        c.channel_id,
+                        u.username,
+                        u.tgid AS user_id
+                    FROM channels c
+                    LEFT JOIN channel_subscriptions cs ON c.channel_id = cs.channel_id
+                    LEFT JOIN userss u ON cs.user_id = u.tgid
+                    ORDER BY c.channel_id
+                """)
 
+            if not records:
+                await bot.send_message(m.chat.id, "Нет данных о подписках")
+                return
+
+            # Группируем подписчиков по каналам
+            from collections import defaultdict
+            import io
+            import csv
+
+            subscriptions = defaultdict(list)
+            for row in records:
+                channel_info = f"{row['channel_name']} ({row['channel_id']})"
+                user_info = f"{row['username'] or 'user_' + str(row['user_id'])} ({row['user_id']})"
+                subscriptions[channel_info].append(user_info)
+
+            # Создаем CSV
+            output = io.StringIO()
+            writer = csv.writer(output, delimiter=';')
+
+            # Заголовок с именами каналов
+            writer.writerow(subscriptions.keys())
+
+            # Количество подписчиков под каждым каналом
+            writer.writerow([len(subscriptions[channel]) for channel in subscriptions])
+
+            # Формируем строки с подписчиками
+            max_subs = max(len(users) for users in
+                           subscriptions.values())  # Находим максимальное кол-во подписчиков у одного канала
+            for i in range(max_subs):
+                row = [subscriptions[channel][i] if i < len(subscriptions[channel]) else "" for channel in
+                       subscriptions]
+                writer.writerow(row)
+
+            # Преобразуем в байты и отправляем
+            output.seek(0)
+            csv_data = io.BytesIO(output.getvalue().encode())
+            csv_data.name = 'subscriptions_report.csv'
+
+            await bot.send_document(
+                chat_id=m.chat.id,
+                document=csv_data,
+                caption="Отчет по подпискам"
+            )
         if e.demojize(m.text) == "Назад :right_arrow_curving_left:":
             await bot.send_message(m.from_user.id, "Админ панель", reply_markup=await buttons.admin_buttons())
             return
@@ -603,74 +707,10 @@ async def Work_with_Message(m: types.Message):
                 )
             return
 
-        if e.demojize(m.text) == "Продлить пробный период":
-            async with pool.acquire() as conn:
-                log = await conn.fetch("SELECT * FROM userss WHERE banned = TRUE AND username <> '@None'")
 
-            timetoadd = timedelta(days=1)  # 3 дня
-            countSended = 0
-            countBlocked = 0
-            BotChecking = TeleBot(BOTAPIKEY)
-
-            for user in log:
-                try:
-                    countSended += 1
-                    async with pool.acquire() as conn:
-                        await conn.execute(
-                            """
-                            UPDATE userss 
-                            SET subscription = TIMEZONE('UTC', NOW()) + $1, 
-                                banned = FALSE, 
-                                notion_oneday = FALSE 
-                            WHERE tgid = $2
-                            """,
-                            timetoadd,
-                            user["tgid"]
-                        )
-                    subprocess.call(f'./addusertovpn.sh {user["tgid"]}', shell=True)
-
-                    # Отправляем сообщение пользователю через `asyncio.create_task`, чтобы не блокировать цикл
-                    asyncio.create_task(
-                        bot.send_message(
-                            user["tgid"],
-                            texts_for_bot["alert_to_extend_sub"],
-                            reply_markup=await main_buttons(user_dat),
-                            parse_mode="HTML"
-                        )
-                    )
-
-                except Exception as ex:
-                    countSended -= 1
-                    countBlocked += 1
-                    print(f"Ошибка у пользователя {user['tgid']}: {ex}")
-                    pass
-
-            BotChecking.send_message(
-                CONFIG['admin_tg_id'],
-                f"Добавлен пробный период {countSended} пользователям. {countBlocked} пользователей заблокировало бота",
-                parse_mode="HTML"
-            )
-        if e.demojize(m.text) == "Уведомление об обновлении":
-            async with pool.acquire() as conn:
-                log = await conn.fetch("SELECT * FROM userss WHERE username <> '@None'")
-            BotChecking = TeleBot(BOTAPIKEY)
-            countSended = 0
-            countBlocked = 0
-            for user in log:
-                try:
-                    countSended += 1
-
-                    BotChecking.send_message(user['tgid'],
-                                             texts_for_bot["alert_to_update"],
-                                             reply_markup=await main_buttons(user_dat), parse_mode="HTML")
-                except:
-                    countSended -= 1
-                    countBlocked += 1
-                    pass
-
-            BotChecking.send_message(CONFIG['admin_tg_id'],
-                                     f"Сообщение отправлено {countSended} пользователям. {countBlocked} пользователей заблокировало бота",
-                                     parse_mode="HTML")
+        if e.demojize(m.text, language='alias') == ":loudspeaker: Уведомление пользователей":
+            await bot.set_state(m.from_user.id, MyStates.waiting_for_message)
+            await bot.send_message(m.from_user.id, "✍ Введите сообщение для рассылки:")
 
         if e.demojize(m.text) == "Пользователей с подпиской":
             allusers = await user_dat.GetAllUsersWithSub(pool=pool)
@@ -906,6 +946,12 @@ async def check_subscription_handler(call: types.CallbackQuery):
                 "UPDATE userss SET promo_flag = TRUE, checked_sub = FALSE, subscription = $1 WHERE tgid = $2",
                 now, user_id
             )
+            # Добавляем подписки
+            for channel in channels:
+                await conn.execute(
+                    "INSERT INTO channel_subscriptions (user_id, channel_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                    user_id, channel['channel_id']
+                )
         subprocess.call(f'./addusertovpn.sh {user_id}', shell=True)
         await bot.send_message(chat_id, "✅ Доступ к VPN активирован на 3 дня!")
         await bot.delete_state(user_id, chat_id)
@@ -1070,8 +1116,8 @@ async def checkTime():
 
     while True:
         try:
-            print("[INFO] Ожидание 1800 секунд перед следующей проверкой...")
-            await asyncio.sleep(1800)  # ✅ Правильный async sleep
+            print("[INFO] Ожидание час перед следующей проверкой...")
+            await asyncio.sleep(3600)  # ✅ Правильный async sleep
 
             print("[INFO] Проверка истекших доступов...")
             async with pool.acquire() as conn:

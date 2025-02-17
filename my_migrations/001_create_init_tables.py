@@ -61,6 +61,16 @@ steps = [
         """,
         "DROP TABLE channels;"
     ),
+    step(
+        """
+        CREATE TABLE IF NOT EXISTS channel_subscriptions (
+    user_id BIGINT REFERENCES userss(tgid),
+    channel_id BIGINT REFERENCES channels(channel_id),
+    PRIMARY KEY (user_id, channel_id)
+);
+""",
+        "DROP TABLE channel_subscriptions;"
+    ),
 
     # Создание уникального индекса для tgid в userss
     step(
