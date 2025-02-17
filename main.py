@@ -776,11 +776,12 @@ async def Work_with_Message(m: types.Message):
             sub_trial = sub_trial.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
         if sub_end_paid:
             sub_end_paid = sub_end_paid.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
-
+        print("1")
         # Определяем, какая дата позже
         latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
         if latest_sub_end and latest_sub_end > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):
             Butt_how_to = types.InlineKeyboardMarkup()
+            print("2")
             Butt_how_to.add(
                 types.InlineKeyboardButton(e.emojize("Подробнее как подключить"),
                                            url="https://telegra.ph/Gajd-na-ustanovku-11-27"))
@@ -829,7 +830,7 @@ async def Work_with_Message(m: types.Message):
             if sub_end_paid and promo_flag and sub_end_paid > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):  # Сравниваем корректно в UTC+3
                 readymes = (
                     f"У вас активирован доступ к ВПН до "
-                    f"<b>{sub_end_paid.strftime('%d.%m.%Y %H:%M')}</b> ✅\n\n"
+                    f"<b>{sub_end_paid.strftime('%d.%m.%Y %H:%M')}</b> ✅\n"
                     f"\n Жми 'Как подключить' 👇👇" 
                     f"⚠️ ВНИМАНИЕ! НЕ ОТПИСЫВАЙСЯ ИЛИ ВСЁ ПОЙДЕТ ПО ПИЗДЕ!"
                 )
@@ -910,7 +911,7 @@ async def check_subscription_handler(call: types.CallbackQuery):
                     user_id, channel['channel_id']
                 )
         subprocess.call(f'./addusertovpn.sh {user_id}', shell=True)
-        await bot.send_message(chat_id, "✅ Доступ к VPN активирован на 3 дня!")
+        await bot.send_message(chat_id, "✅ Доступ к VPN активирован на 3 дня! \n Жми 'Как подключить' 👇👇")
         await bot.delete_state(user_id, chat_id)
 
 

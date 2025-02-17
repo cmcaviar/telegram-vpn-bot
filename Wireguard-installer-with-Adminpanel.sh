@@ -145,8 +145,6 @@ function installWireGuard() {
 			wget https://github.com/cmcaviar/telegram-vpn-bot/releases/download/release_1.0.0/master.zip
 			unzip master.zip
 			rm master.zip
-#      apt-get install git
-#      git clone https://github.com/svishnevskii/telegram_wireguard telegram-vpn-bot
 			pip install -r "$(pwd)/telegram-vpn-bot/requirements.txt"
 			echo "{
 \"admin_tg_id\": ${ADMIN_ID_BOT},
