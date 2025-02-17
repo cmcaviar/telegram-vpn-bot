@@ -777,12 +777,10 @@ async def Work_with_Message(m: types.Message):
             sub_trial = sub_trial.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
         if sub_end_paid:
             sub_end_paid = sub_end_paid.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
-        logger.info("1")
         # Определяем, какая дата позже
         latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
         if latest_sub_end and latest_sub_end > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):
             Butt_how_to = types.InlineKeyboardMarkup()
-            logger.info("2")
             Butt_how_to.add(
                 types.InlineKeyboardButton(e.emojize("Подробнее как подключить"),
                                            url="https://telegra.ph/Gajd-na-ustanovku-11-27"))
@@ -949,13 +947,13 @@ async def AddTimeToUser(tgid, timetoadd):
     userdat = await User.GetInfo(pool=pool, tgid=tgid)
 
     async with pool.acquire() as conn:
-        now_moscow = datetime.now(MOSCOW_TZ)  # Текущее время в UTC+3
+        now_moscow = datetime.now(MOSCOW_TZ).astimezone(MOSCOW_TZ)  # Текущее время в UTC+3
 
         # Приводим подписку пользователя к UTC+3 (если есть)
         if userdat.subscription:
             user_subscription = userdat.subscription.replace(tzinfo=MOSCOW_TZ)
         else:
-            user_subscription = now_moscow  # Если подписки нет, считаем ее истекшей
+            user_subscription = now_moscow - timedelta(seconds=10000)  # Если подписки нет, считаем ее истекшей
 
         # Если подписка уже истекла, начинаем отсчет с текущего момента
         if user_subscription < now_moscow:
@@ -975,10 +973,11 @@ async def AddTimeToUser(tgid, timetoadd):
 
         # Если подписка была истекшей, добавляем пользователя в VPN
         if user_subscription < now_moscow:
+
             subprocess.call(f'./addusertovpn.sh {userdat.tgid}', shell=True)
 
             # Уведомляем пользователя
-            await asyncio.to_thread(bot.send_message, userdat.tgid, e.emojize(
+            await bot.send_message(userdat.tgid, e.emojize(
                 '✅ Данные для входа обновлены! Скачайте новый файл авторизации в разделе "Как подключить :gear:"'
             ))
 
