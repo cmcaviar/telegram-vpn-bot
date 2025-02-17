@@ -26,7 +26,6 @@ class User:
         if log:
             self.id = log["id"]
             self.subscription = log["subscription"]
-            self.trial_subscription = log["banned"]
             self.sub_trial = log["sub_trial"]
             self.promo_flag = log["promo_flag"]
             self.checked_sub = log["checked_sub"]

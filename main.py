@@ -342,10 +342,12 @@ async def Work_with_Message(m: types.Message):
     # Определяем, какая дата позже
     latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
 
-    if latest_sub_end and latest_sub_end.replace(tzinfo=MOSCOW_TZ) > datetime.now(MOSCOW_TZ).astimezone(MOSCOW_TZ):
-        readymes += f"Подписка: до <b>{user_dat.subscription.strftime('%d.%m.%Y %H:%M')}</b> ✅"
-    else:
-        readymes += f"Подписка: закончилась <b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')}</b>❌"
+    if latest_sub_end:
+        if latest_sub_end.replace(tzinfo=MOSCOW_TZ) > datetime.now(MOSCOW_TZ).astimezone(MOSCOW_TZ):
+            readymes += f"Подписка: до <b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')}</b> ✅"
+        else:
+            readymes += f"Подписка: закончилась <b>{latest_sub_end.strftime('%d.%m.%Y %H:%M')}</b>❌"
+    else: readymes += f"Подписки пока нет"
 
 
     await bot.set_state(m.from_user.id, MyStates.editUser)
@@ -671,81 +673,24 @@ async def Work_with_Message(m: types.Message):
             await bot.send_message(m.from_user.id, "Админ панель", reply_markup=await buttons.admin_buttons())
             return
 
-        if e.demojize(m.text) == "Всех пользователей":
-            allusers = await user_dat.GetAllUsers(pool=pool)
-            readymass = []
-            readymes = ""
-
-            for user in allusers:
-                sub_trial = user.get('sub_trial')
-                sub_end_paid = user.get('subscription')
-
-                # Определяем, какая дата позже
-                latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
-
-                now_utc3 = datetime.now(pytz.utc).astimezone(MOSCOW_TZ).replace(tzinfo=None)  # Текущее время в UTC+3
-
-                if latest_sub_end and latest_sub_end > now_utc3:
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ✅ до {latest_sub_end.strftime('%d.%m.%Y %H:%M')}\n"
-                else:
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ закончилась {latest_sub_end.strftime('%d.%m.%Y %H:%M') if latest_sub_end else '—'}\n"
-
-                if len(readymes) + len(user_info) > 4090:
-                    readymass.append(readymes)
-                    readymes = ""
-
-                readymes += user_info
-
-            readymass.append(readymes)
-
-            for user in readymass:
-                await bot.send_message(
-                    m.from_user.id,
-                    e.emojize(user),
-                    reply_markup=await buttons.admin_buttons(),
-                    parse_mode="HTML"
-                )
-            return
-
-
         if e.demojize(m.text, language='alias') == ":loudspeaker: Уведомление пользователей":
             await bot.set_state(m.from_user.id, MyStates.waiting_for_message)
             await bot.send_message(m.from_user.id, "✍ Введите сообщение для рассылки:")
 
+        if e.demojize(m.text) == "Всех пользователей":
+            allusers = await user_dat.GetAllUsers(pool=pool)
+            await showUsers(user_dat, allusers, m)
+            return
+
         if e.demojize(m.text) == "Пользователей с подпиской":
             allusers = await user_dat.GetAllUsersWithSub(pool=pool)
-            readymass = []
-            readymes = ""
             if len(allusers) == 0:
                 await bot.send_message(m.from_user.id, e.emojize("Нету пользователей с подпиской!"),
                                        reply_markup=await buttons.admin_buttons(), parse_mode="HTML")
                 return
-            for user in allusers:
-                MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+            await showUsers(user_dat, allusers, m)
+            return
 
-                # Приводим даты к часовому поясу UTC+3
-                sub_trial = user.get('sub_trial')
-                sub_end_paid = user.get('subscription')
-
-                # Определяем, какая дата позже
-                latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
-
-                now_utc3 = datetime.now(pytz.utc).astimezone(MOSCOW_TZ).replace(tzinfo=None)  # Текущее время в UTC+3
-
-                if latest_sub_end and latest_sub_end > now_utc3:
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ✅ до {latest_sub_end.strftime('%d.%m.%Y %H:%M')}\n"
-                else:
-                    user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ закончилась {latest_sub_end.strftime('%d.%m.%Y %H:%M') if latest_sub_end else '—'}\n"
-
-                if len(readymes) + len(user_info) > 4090:
-                    readymass.append(readymes)
-                    readymes = ""
-
-                readymes += user_info
-
-            readymass.append(readymes)
-            for user in readymass:
-                await bot.send_message(m.from_user.id, e.emojize(user), parse_mode="HTML")
         if e.demojize(m.text) == "Вывести статичных пользователей":
             async with pool.acquire() as conn:
                 all_staticusers = await conn.fetch("SELECT * FROM static_profiles")
@@ -823,7 +768,18 @@ async def Work_with_Message(m: types.Message):
                                    reply_markup=Butt_payment, parse_mode="HTML")
 
     if e.demojize(m.text) == "Как подключить :gear:":
-        if user_dat.trial_subscription == False:
+        sub_trial = user_dat.sub_trial
+        sub_end_paid = user_dat.subscription
+
+        # Приводим даты к часовому поясу UTC+3
+        if sub_trial:
+            sub_trial = sub_trial.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
+        if sub_end_paid:
+            sub_end_paid = sub_end_paid.replace(tzinfo=MOSCOW_TZ).astimezone(MOSCOW_TZ)
+
+        # Определяем, какая дата позже
+        latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
+        if latest_sub_end and latest_sub_end > datetime.now(MOSCOW_TZ).replace(tzinfo=MOSCOW_TZ):
             Butt_how_to = types.InlineKeyboardMarkup()
             Butt_how_to.add(
                 types.InlineKeyboardButton(e.emojize("Подробнее как подключить"),
@@ -874,6 +830,7 @@ async def Work_with_Message(m: types.Message):
                 readymes = (
                     f"У вас активирован доступ к ВПН до "
                     f"<b>{sub_end_paid.strftime('%d.%m.%Y %H:%M')}</b> ✅\n\n"
+                    f"\n Жми 'Как подключить' 👇👇" 
                     f"⚠️ ВНИМАНИЕ! НЕ ОТПИСЫВАЙСЯ ИЛИ ВСЁ ПОЙДЕТ ПО ПИЗДЕ!"
                 )
                 await bot.send_message(
@@ -1257,6 +1214,40 @@ async def subscription_checker():
 
         print("✅ Проверка подписок завершена.")
 
+async def showUsers(user_dat, allusers, m: types.Message):
+    readymass = []
+    readymes = ""
+
+    for user in allusers:
+        sub_trial = user_dat.sub_trial
+        sub_end_paid = user_dat.subscription
+
+        # Определяем, какая дата позже
+        latest_sub_end = max(filter(None, [sub_trial, sub_end_paid]), default=None)
+
+        now_utc3 = datetime.now(pytz.utc).astimezone(MOSCOW_TZ).replace(tzinfo=None)  # Текущее время в UTC+3
+
+        if latest_sub_end and latest_sub_end > now_utc3:
+            user_info = f"{user[7]} (<code>{str(user[1])}</code>) ✅ до {latest_sub_end.strftime('%d.%m.%Y %H:%M')}\n"
+        else:
+            user_info = f"{user[7]} (<code>{str(user[1])}</code>) ❌ закончилась {latest_sub_end.strftime('%d.%m.%Y %H:%M') if latest_sub_end else '—'}\n"
+
+        if len(readymes) + len(user_info) > 4090:
+            readymass.append(readymes)
+            readymes = ""
+
+        readymes += user_info
+
+    readymass.append(readymes)
+
+    for user in readymass:
+        await bot.send_message(
+            m.from_user.id,
+            e.emojize(user),
+            reply_markup=await buttons.admin_buttons(),
+            parse_mode="HTML"
+        )
+    return
 
 if __name__ == '__main__':
     asyncio.run(main())
