@@ -13,7 +13,7 @@ async def main_buttons(user: User):
     Butt_main = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
 
-    if CONFIG["admin_tg_id"] == user.tgid:
+    if user.tgid in CONFIG["admin_tg_id"]:
         Butt_main.add(types.KeyboardButton(e.emojize(f"Админ-панель :smiling_face_with_sunglasses:")))
 
     Butt_main.add(

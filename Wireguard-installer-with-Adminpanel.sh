@@ -121,33 +121,33 @@ function installQuestions() {
 	read -rp "Hotite li ustanovit' srazu Telegram bota(1 - Da, 0 - Net): " -e -i "1" BOT_AUTO_INSTALL
 
 	if [[ ${BOT_AUTO_INSTALL} == '1' ]]; then
-		read -rp "Telegram API: " -e API_TOKEN_BOT
-		read -rp "YCassa API: " -e API_PAYMENT_BOT
-		read -rp "Telegram-id Admin: " -e ADMIN_ID_BOT
-	fi
-	echo ""
-	echo "Ok!"
-	read -n1 -r -p "Press any key to continue..."
-}
+    read -rp "Telegram API: " -e API_TOKEN_BOT
+    read -rp "YCassa API: " -e API_PAYMENT_BOT
+    read -rp "Telegram-id Admin 1: " -e ADMIN_ID_BOT_1
+    read -rp "Telegram-id Admin 2: " -e ADMIN_ID_BOT_2
+fi
+echo ""
+echo "Ok!"
+read -n1 -r -p "Press any key to continue..."
 
 function installWireGuard() {
-	# Run setup questions first
-	installQuestions
+    # Run setup questions first
+    installQuestions
 
-	# Install WireGuard tools and module
-	if [[ ${OS} == 'ubuntu' ]] || [[ ${OS} == 'debian' && ${VERSION_ID} -gt 10 ]]; then
-	
-		export TZ=Europe/Moscow
-		apt-get update
-		if [[ ${BOT_AUTO_INSTALL} == '1' ]]; then
-			apt-get install unzip
-			apt-get install python3-pip -y
-			wget https://github.com/cmcaviar/telegram-vpn-bot/releases/download/release_1.0.0/master.zip
-			unzip master.zip
-			rm master.zip
-			pip install -r "$(pwd)/telegram-vpn-bot/requirements.txt"
-			echo "{
-\"admin_tg_id\": ${ADMIN_ID_BOT},
+    # Install WireGuard tools and module
+    if [[ ${OS} == 'ubuntu' ]] || [[ ${OS} == 'debian' && ${VERSION_ID} -gt 10 ]]; then
+
+        export TZ=Europe/Moscow
+        apt-get update
+        if [[ ${BOT_AUTO_INSTALL} == '1' ]]; then
+            apt-get install unzip
+            apt-get install python3-pip -y
+            wget https://github.com/cmcaviar/telegram-vpn-bot/releases/download/release_1.0.0/master.zip
+            unzip master.zip
+            rm master.zip
+            pip install -r "$(pwd)/telegram-vpn-bot/requirements.txt"
+            echo "{
+\"admin_tg_id\": [${ADMIN_ID_BOT_1}, ${ADMIN_ID_BOT_2}],
 \"one_month_cost\": 70,
 \"trial_period\": 2,
 \"perc_1\":1,
@@ -157,10 +157,10 @@ function installWireGuard() {
 \"tg_token\": \"${API_TOKEN_BOT}\",
 \"tg_shop_token\": \"${API_PAYMENT_BOT}\"
 }" >"$(pwd)/telegram-vpn-bot/config.json"
-			chmod 744 -R $(pwd)/telegram-vpn-bot/
-			echo "[Unit]
+            chmod 744 -R $(pwd)/telegram-vpn-bot/
+            echo "[Unit]
 Description=Admin Bot for Wireguard
-After=multi-user.target
+After=multi-user.target"
 
 [Service]
 Type=simple

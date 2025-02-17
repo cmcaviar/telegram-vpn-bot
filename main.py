@@ -11,7 +11,6 @@ import docker
 import buttons
 import dbworker
 
-from telebot import TeleBot
 from telebot import asyncio_filters
 from telebot.async_telebot import AsyncTeleBot
 import emoji as e
