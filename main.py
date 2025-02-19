@@ -738,7 +738,7 @@ async def Work_with_Message(m: types.Message):
             days = 1
             )
             subprocess.call(f'./addusertovpn.sh {m.from_user.id}', shell=True)
-
+            logger.info(f"Пользователю ${user_dat.username} выдан пробный доступ")
             tomorrow = datetime.now(pytz.utc).astimezone(MOSCOW_TZ) + timedelta(days=1)
             await bot.send_message(m.chat.id,
                                    f"🎉 Выдан пробный доступ до {tomorrow.strftime('%d.%m.%Y %H:%M')} МСК \n Жми 'Как подключить' 👇👇 ",
