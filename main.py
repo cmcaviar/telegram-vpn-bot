@@ -566,7 +566,7 @@ async def Work_with_Message(m: types.Message):
         return
     await user_dat.CheckNewNickname(pool=pool, message=m)
 
-    if m.from_user.id == CONFIG["admin_tg_id"]:
+    if m.from_user.id in CONFIG["admin_tg_id"]:
         if e.demojize(m.text) == "Админ-панель :smiling_face_with_sunglasses:":
             await bot.send_message(m.from_user.id, "Админ панель", reply_markup=await buttons.admin_buttons())
             return
